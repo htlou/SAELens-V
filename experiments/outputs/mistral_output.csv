@@ -1,9 +1,0 @@
-Task,Data Type,Intersection Mean,Intersection Variance,Value Changes Mean,Value Changes Variance
-math,Specific,tensor(3.5439),tensor(0.9652),tensor(0.0714),tensor(0.0024)
-math,General,tensor(3.9312),tensor(1.0246),tensor(0.0489),tensor(0.0022)
-reasoning,Specific,tensor(3.2858),tensor(1.2011),tensor(0.0737),tensor(0.0032)
-reasoning,General,tensor(3.6543),tensor(1.1385),tensor(0.0635),tensor(0.0035)
-empathy,Specific,tensor(3.3899),tensor(1.1065),tensor(0.0778),tensor(0.0052)
-empathy,General,tensor(3.8085),tensor(1.1835),tensor(0.0597),tensor(0.0052)
-chinese,Specific,tensor(2.8289),tensor(1.0156),tensor(0.0974),tensor(0.0059)
-chinese,General,tensor(3.5093),tensor(0.9736),tensor(0.0740),tensor(0.0077)
