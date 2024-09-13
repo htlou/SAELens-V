@@ -2,14 +2,20 @@ from typing import Any, cast
 
 import torch
 from transformer_lens import HookedTransformer
+try:
+    from transformer_lens import HookedChameleon
+except ImportError:
+    HookedChameleon = None
 from transformer_lens.hook_points import HookedRootModule
 
+from transformers import AutoModelForSeq2SeqLM
 
 def load_model(
     model_class_name: str,
     model_name: str,
     device: str | torch.device | None = None,
     model_from_pretrained_kwargs: dict[str, Any] | None = None,
+    local_model_path: str | None = None,
 ) -> HookedRootModule:
     model_from_pretrained_kwargs = model_from_pretrained_kwargs or {}
 
@@ -22,6 +28,10 @@ def load_model(
             device = "cuda"
             print("-------------")
 
+    if local_model_path is not None:
+        hf_model = AutoModelForSeq2SeqLM.from_pretrained(local_model_path)
+    else:
+        hf_model = None
     if model_class_name == "HookedTransformer":
         return HookedTransformer.from_pretrained_no_processing(
             model_name=model_name, device=device, **model_from_pretrained_kwargs
@@ -40,5 +50,15 @@ def load_model(
                 model_name, device=cast(Any, device), **model_from_pretrained_kwargs
             ),
         )
+    elif model_class_name == "HookedChameleon":
+        if hf_model is None:
+            return HookedChameleon.from_pretrained(
+                model_name=model_name, device=device, **model_from_pretrained_kwargs
+            )
+        else:
+            return HookedChameleon.from_pretrained(
+                model_name=model_name, hf_model=hf_model, 
+                device=device, **model_from_pretrained_kwargs
+            )
     else:  # pragma: no cover
         raise ValueError(f"Unknown model class: {model_class_name}")

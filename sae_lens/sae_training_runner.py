@@ -59,6 +59,7 @@ class SAETrainingRunner:
                 self.cfg.model_name,
                 device=self.cfg.device,
                 model_from_pretrained_kwargs=self.cfg.model_from_pretrained_kwargs,
+                local_model_path=self.cfg.local_model_path if self.cfg.local_model_path is not None else None,
             )
         else:
             self.model = override_model
