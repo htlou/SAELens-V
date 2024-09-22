@@ -111,6 +111,7 @@ class LanguageModelSAERunnerConfig:
 
     # Data Generating Function (Model + Training Distibuion)
     model_name: str = "gelu-2l"
+    local_model_path: str = None
     model_class_name: str = "HookedTransformer"
     hook_name: str = "blocks.0.hook_mlp_out"
     hook_eval: str = "NOT_IN_USE"

@@ -4,7 +4,7 @@ import torch
 from transformer_lens import HookedTransformer
 try:
     from transformer_lens import HookedChameleon
-except ImportError:
+except Exception as e:
     HookedChameleon = None
 from transformer_lens.hook_points import HookedRootModule
 
@@ -29,7 +29,11 @@ def load_model(
             print("-------------")
 
     if local_model_path is not None:
-        hf_model = AutoModelForSeq2SeqLM.from_pretrained(local_model_path)
+        if model_class_name == "HookedChameleon":
+            from transformers import ChameleonForConditionalGeneration
+            hf_model = ChameleonForConditionalGeneration.from_pretrained(local_model_path)
+        else:
+            hf_model = AutoModelForSeq2SeqLM.from_pretrained(local_model_path)
     else:
         hf_model = None
     if model_class_name == "HookedTransformer":
@@ -51,6 +55,8 @@ def load_model(
             ),
         )
     elif model_class_name == "HookedChameleon":
+        if HookedChameleon is None:
+            raise ValueError("HookedChameleon is not installed")
         if hf_model is None:
             return HookedChameleon.from_pretrained(
                 model_name=model_name, device=device, **model_from_pretrained_kwargs

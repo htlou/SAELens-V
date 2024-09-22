@@ -1,6 +1,8 @@
 import torch
 import os
 
+os.environ["WANDB_API_KEY"] = "547f38af44135ca76a4f4eed9c8d135532da4960"
+
 from sae_lens import LanguageModelSAERunnerConfig, SAETrainingRunner
 total_training_steps = 30_000  # probably we should do more
 batch_size = 4096
@@ -19,7 +21,7 @@ cfg = LanguageModelSAERunnerConfig(
     hook_name="blocks.8.hook_resid_post",  # A valid hook point (see more details here: https://neelnanda-io.github.io/TransformerLens/generated/demos/Main_Demo.html#Hook-Points)
     hook_layer=8,  # Only one layer in the model.
     d_in=4096,  # the width of the mlp output.
-    dataset_path="htlou/obelics_obelics_10k_tokenized",  # this is a tokenized language dataset on Huggingface for the Tiny Stories corpus.
+    dataset_path="htlou/obelics_obelics_10k_tokenized_2048",  # this is a tokenized language dataset on Huggingface for the Tiny Stories corpus.
     is_dataset_tokenized=True,
     streaming=True,  # we could pre-download the token dataset if it was small.
     # SAE Parameters
@@ -43,7 +45,7 @@ cfg = LanguageModelSAERunnerConfig(
     l1_warm_up_steps=l1_warm_up_steps,  # this can help avoid too many dead features initially.
     lp_norm=1.0,  # the L1 penalty (and not a Lp for p < 1)
     train_batch_size_tokens=batch_size,
-    context_size=512,  # will control the lenght of the prompts we feed to the model. Larger is better but slower. so for the tutorial we'll use a short one.
+    context_size=2048,  # will control the lenght of the prompts we feed to the model. Larger is better but slower. so for the tutorial we'll use a short one.
     # Activation Store Parameters
     n_batches_in_buffer=64,  # controls how many activations we store / shuffle.
     training_tokens=total_training_tokens,  # 100 million tokens is quite a few, but we want to see good stats. Get a coffee, come back.
