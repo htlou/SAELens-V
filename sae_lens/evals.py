@@ -286,9 +286,9 @@ def get_sparsity_and_variance_metrics(
         flattened_sae_out = einops.rearrange(sae_out, "b ctx d -> (b ctx) d")
 
         # apply mask
-        flattened_sae_input = flattened_sae_input[flattened_mask]
-        flattened_sae_feature_acts = flattened_sae_feature_acts[flattened_mask]
-        flattened_sae_out = flattened_sae_out[flattened_mask]
+        flattened_sae_input = flattened_sae_input[flattened_mask.to(flattened_sae_input.device)]
+        flattened_sae_feature_acts = flattened_sae_feature_acts[flattened_mask.to(flattened_sae_feature_acts.device)]
+        flattened_sae_out = flattened_sae_out[flattened_mask.to(flattened_sae_out.device)]
 
         if compute_l2_norms:
             l2_norm_in = torch.norm(flattened_sae_input, dim=-1)

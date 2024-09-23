@@ -12,7 +12,7 @@ lr_warm_up_steps = 0
 lr_decay_steps = total_training_steps // 5  # 20% of training
 l1_warm_up_steps = total_training_steps // 20  # 5% of training
 
-device = "cuda"
+device = "cuda:7"
 cfg = LanguageModelSAERunnerConfig(
     # Data Generating Function (Model + Training Distibuion)
     model_class_name="HookedChameleon",
@@ -26,7 +26,7 @@ cfg = LanguageModelSAERunnerConfig(
     streaming=True,  # we could pre-download the token dataset if it was small.
     # SAE Parameters
     mse_loss_normalization=None,  # We won't normalize the mse loss,
-    expansion_factor=64,  # the width of the SAE. Larger will result in better stats but slower training.
+    expansion_factor=32,  # the width of the SAE. Larger will result in better stats but slower training.
     b_dec_init_method="zeros",  # The geometric median can be used to initialize the decoder weights.
     apply_b_dec_to_input=False,  # We won't apply the decoder weights to the input.
     normalize_sae_decoder=False,
@@ -49,7 +49,7 @@ cfg = LanguageModelSAERunnerConfig(
     # Activation Store Parameters
     n_batches_in_buffer=64,  # controls how many activations we store / shuffle.
     training_tokens=total_training_tokens,  # 100 million tokens is quite a few, but we want to see good stats. Get a coffee, come back.
-    store_batch_size_prompts=16,
+    store_batch_size_prompts=4,
     # Resampling protocol
     use_ghost_grads=False,  # we don't use ghost grads anymore.
     feature_sampling_window=1000,  # this controls our reporting of feature sparsity stats
@@ -63,10 +63,11 @@ cfg = LanguageModelSAERunnerConfig(
     # Misc
     device=device,
     seed=42,
-    n_checkpoints=0,
+    n_checkpoints=8,
     checkpoint_path="checkpoints",
     dtype="float32",
-    model_from_pretrained_kwargs={"n_devices": 8},
+    model_from_pretrained_kwargs={"n_devices": 7},
+    act_store_device="cpu",
 )
 # look at the next cell to see some instruction for what to do while this is running.
 sparse_autoencoder = SAETrainingRunner(cfg).run()
