@@ -1,13 +1,18 @@
 from typing import Any, cast
 
 import torch
+# import sys
+# sys.path.insert(0,"/data/changye/TransformerLens-V")
 from transformer_lens import HookedTransformer
 try:
     from transformer_lens import HookedChameleon
 except Exception as e:
     HookedChameleon = None
+try:
+    from transformer_lens.HookedLlava import HookedLlava
+except Exception as e:
+    HookedLlava = None
 from transformer_lens.hook_points import HookedRootModule
-
 from transformers import AutoModelForSeq2SeqLM
 
 def load_model(
@@ -32,6 +37,9 @@ def load_model(
         if model_class_name == "HookedChameleon":
             from transformers import ChameleonForConditionalGeneration
             hf_model = ChameleonForConditionalGeneration.from_pretrained(local_model_path)
+        elif model_class_name =="HookedLlava":
+            from transformers import LlavaForConditionalGeneration
+            hf_model=LlavaForConditionalGeneration.from_pretrained(local_model_path)
         else:
             hf_model = AutoModelForSeq2SeqLM.from_pretrained(local_model_path)
     else:
@@ -64,6 +72,19 @@ def load_model(
         else:
             return HookedChameleon.from_pretrained(
                 model_name=model_name, hf_model=hf_model, 
+                device=device, **model_from_pretrained_kwargs
+            )
+    elif model_class_name == "HookedLlava":
+        if HookedLlava is None:
+            raise ValueError("HookedLlava is not installed")
+        if hf_model is None:
+
+            return HookedLlava.from_pretrained(
+                model_name=model_name, device=device, **model_from_pretrained_kwargs
+            )
+        else:
+            return HookedLlava.from_pretrained(
+                model_name=model_name, hf_model=hf_model.language_model, 
                 device=device, **model_from_pretrained_kwargs
             )
     else:  # pragma: no cover

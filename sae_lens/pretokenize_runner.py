@@ -6,14 +6,23 @@ from pathlib import Path
 from typing import Iterator, Literal, cast
 
 import torch
+import torchvision.transforms as transforms
 from datasets import Dataset, DatasetDict, load_dataset
 from huggingface_hub import HfApi
-from transformers import AutoTokenizer, PreTrainedTokenizerBase
+from transformers import AutoTokenizer, PreTrainedTokenizerBase,LlavaNextProcessor
 from typing_extensions import deprecated
 
 from sae_lens import __version__
 from sae_lens.config import PretokenizeRunnerConfig
 from sae_lens.tokenization_and_batching import concat_and_batch_sequences
+from io import BytesIO
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+import os
+import concurrent.futures
+import requests
+from PIL import Image
+
 
 
 @dataclass
@@ -111,6 +120,114 @@ def pretokenize_dataset(
     tokenized_dataset.set_format(type="torch", columns=["input_ids"])
     return tokenized_dataset
 
+def process_image_list(urls_list):
+    images = []
+    for urls in urls_list:
+        image_list = []
+        for url in urls:
+            if url!=None:
+                full_path = os.path.join("/data/changye/", url)
+            else:
+                image_list.append(None)
+                continue
+            try:
+
+                image = Image.open(full_path)
+                if image.mode == 'P':
+                    image = image.convert('RGBA')
+
+                desired_size = (224, 224)
+                image = image.resize(desired_size)
+                image_list.append(image)
+            except Exception as e:
+                print(f"Error loading image {full_path}: {e}")
+                image_list.append(None)  # 或者你可以选择跳过此图片
+        images.append(image_list)
+            # 构造完整的文件路径（假设 cfg.base_path 是图片文件的根目录）
+
+    return images
+
+def process_examples(example, processor, cfg):
+    texts_list = example[cfg.column_name]
+    urls = example[cfg.image_column_name]
+    images_list = process_image_list(urls)
+
+    # 初始化结果字典
+    result = {
+        "input_ids": [],
+        "pixel_values": [],
+        "attention_mask": [],
+        "image_sizes": [],
+    }
+
+    for texts, images in zip(texts_list, images_list):
+        conversation_content = []
+        images_in_prompt = []
+
+        for text, image in zip(texts, images):
+            if text is not None:
+                conversation_content.append({"type": "text", "text": text})
+            elif image is not None:
+                conversation_content.append({"type": "image"})
+                images_in_prompt.append(image)
+            else:
+                print("none!")
+                continue
+
+        # 构建对话
+        conversation = [
+            {
+                "role": "user",
+                "content": conversation_content,
+            },
+        ]
+
+        # 应用聊天模板
+        prompt = processor.apply_chat_template(conversation, add_generation_prompt=True)
+
+        # 调用 processor 进行处理
+        processed = processor(images=images_in_prompt, text=prompt, return_tensors="pt")
+
+        # 提取处理后的数据
+        input_ids = processed["input_ids"]
+        pixel_values = processed["pixel_values"]
+        attention_mask = processed["attention_mask"]
+        image_sizes = processed["image_sizes"]
+
+        # 将数据添加到结果字典中
+        result["input_ids"].append(input_ids)
+        result["pixel_values"].append(pixel_values)
+        result["attention_mask"].append(attention_mask)
+        result["image_sizes"].append(image_sizes)
+
+    return result
+
+
+def preprocess_dataset(
+    dataset,  # Dataset object
+    processor,  # PreTrainedTokenizerBase object
+    cfg  # PretokenizeRunnerConfig object
+):
+    # 使用 dataset.map 方法处理数据集
+    processed_dataset = dataset.map(
+        lambda example: process_examples(example, processor, cfg),
+        batched=True,
+        batch_size=300,
+        remove_columns=dataset.column_names  # 移除原始列，保留处理后的列
+    )
+
+    # 根据需要设置格式
+    columns_to_set = ["input_ids", "pixel_values", "attention_mask"]
+    if "image_sizes" in processed_dataset.column_names:
+        columns_to_set.append("image_sizes")
+
+    processed_dataset.set_format(type="torch", columns=columns_to_set)
+
+    return processed_dataset  # 返回处理后的 Dataset 对象
+
+
+
+
 
 def push_to_hugging_face_hub(
     dataset: Dataset,
@@ -173,11 +290,45 @@ class PretokenizeRunner:
             raise ValueError(
                 "Dataset has multiple splits. Must provide a 'split' param."
             )
-        tokenizer = AutoTokenizer.from_pretrained(self.cfg.tokenizer_name)
-        tokenizer.model_max_length = sys.maxsize
-        tokenized_dataset = pretokenize_dataset(
-            cast(Dataset, dataset), tokenizer, self.cfg
-        )
+        if "llava" in self.cfg.tokenizer_name:
+            processor = LlavaNextProcessor.from_pretrained(self.cfg.tokenizer_name)
+            batch_size = 10000
+        total_examples = len(dataset)
+        num_batches = (total_examples + batch_size - 1) // batch_size  # 计算总批次数
+
+        for batch_num in range(num_batches):
+            start_idx = batch_num * batch_size
+            end_idx = min(start_idx + batch_size, total_examples)
+            print(f"Processing batch {batch_num+1}/{num_batches}, examples {start_idx+1}-{end_idx}")
+
+            # 处理当前批次
+            processed_dataset = preprocess_dataset(
+                dataset, processor, self.cfg
+            )
+            tokenized_dataset = processed_dataset
+
+            # 保存当前批次的数据集
+            if self.cfg.save_path is not None:
+                # 为每个批次创建一个子目录或文件名
+                batch_save_path = os.path.join(self.cfg.save_path, f"batch_{batch_num+1}")
+                os.makedirs(batch_save_path, exist_ok=True)
+
+                tokenized_dataset.save_to_disk(batch_save_path)
+                metadata = metadata_from_config(self.cfg)
+                metadata_path = Path(batch_save_path) / "sae_lens.json"
+                with open(metadata_path, "w") as f:
+                    json.dump(metadata.__dict__, f, indent=2, ensure_ascii=False)
+
+            # # 如果需要，将批次上传到 Hugging Face Hub
+            # if self.cfg.hf_repo_id is not None:
+            #     # 您可能需要修改 `push_to_hugging_face_hub` 函数以支持批次上传
+            #     push_to_hugging_face_hub(tokenized_dataset, self.cfg)
+        else: 
+            tokenizer = AutoTokenizer.from_pretrained(self.cfg.tokenizer_name)
+            tokenizer.model_max_length = sys.maxsize
+            tokenized_dataset = pretokenize_dataset(
+                cast(Dataset, dataset), tokenizer, self.cfg
+            )
 
         if self.cfg.save_path is not None:
             tokenized_dataset.save_to_disk(self.cfg.save_path)
@@ -186,7 +337,7 @@ class PretokenizeRunner:
             with open(metadata_path, "w") as f:
                 json.dump(metadata.__dict__, f, indent=2, ensure_ascii=False)
 
-        if self.cfg.hf_repo_id is not None:
-            push_to_hugging_face_hub(tokenized_dataset, self.cfg)
+        # if self.cfg.hf_repo_id is not None:
+        #     push_to_hugging_face_hub(tokenized_dataset, self.cfg)
 
         return tokenized_dataset

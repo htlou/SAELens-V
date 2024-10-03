@@ -1,0 +1,17 @@
+{
+    "count": 10000,
+    "successes": 0,
+    "failed_to_download": 10000,
+    "failed_to_resize": 0,
+    "duration": 1.3838160037994385,
+    "start_time": 1727259067.3702333,
+    "end_time": 1727259068.7540493,
+    "status_dict": {
+        "<urlopen error unknown url type: [none, 'https>": 3685,
+        "<urlopen error unknown url type: ['https>": 4825,
+        "<urlopen error unknown url type: [none, 'http>": 741,
+        "<urlopen error unknown url type: ['http>": 747,
+        "<urlopen error unknown url type: [none, \"https>": 1,
+        "<urlopen error unknown url type: [none, \"http>": 1
+    }
+}

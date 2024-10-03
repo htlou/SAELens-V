@@ -7,7 +7,7 @@ from typing import Any, Generator, Iterator, Literal, cast
 
 import numpy as np
 import torch
-from datasets import Dataset, DatasetDict, IterableDataset, load_dataset
+from datasets import Dataset, DatasetDict, IterableDataset, load_dataset,load_from_disk
 from huggingface_hub import hf_hub_download
 from huggingface_hub.utils._errors import HfHubHTTPError
 from requests import HTTPError
@@ -151,16 +151,25 @@ class ActivationsStore:
         if model_kwargs is None:
             model_kwargs = {}
         self.model_kwargs = model_kwargs
-        self.dataset = (
-            load_dataset(
-                dataset,
-                split="train",
-                streaming=streaming,
-                trust_remote_code=dataset_trust_remote_code,  # type: ignore
+        try:
+            self.dataset = (
+                load_dataset(
+                    dataset,
+                    split="train",
+                    streaming=streaming,
+                    trust_remote_code=dataset_trust_remote_code,  # type: ignore
+                )
+                if isinstance(dataset, str)
+                else dataset
             )
-            if isinstance(dataset, str)
-            else dataset
-        )
+        except Exception as e:
+            self.dataset = (
+                load_from_disk(
+                    dataset,
+                )
+                if isinstance(dataset, str)
+                else dataset
+            )
 
         if isinstance(dataset, (Dataset, DatasetDict)):
             self.dataset = cast(Dataset | DatasetDict, self.dataset)
@@ -212,24 +221,28 @@ class ActivationsStore:
             raise ValueError(
                 "Dataset must have a 'tokens', 'input_ids', 'text', or 'problem' column."
             )
+
         if self.is_dataset_tokenized:
-            ds_context_size = len(dataset_sample[self.tokens_column])
-            if ds_context_size != self.context_size:
-                raise ValueError(
-                    f"pretokenized dataset has context_size {ds_context_size}, but the provided context_size is {self.context_size}."
-                )
+            if "pixel_values" in dataset_sample.keys():
+                ds_context_size=self.context_size
+            else:
+                ds_context_size = len(dataset_sample[self.tokens_column])
+                if ds_context_size != self.context_size:
+                    raise ValueError(
+                        f"pretokenized dataset has context_size {ds_context_size}, but the provided context_size is {self.context_size}."
+                    )
             # TODO: investigate if this can work for iterable datasets, or if this is even worthwhile as a perf improvement
             if hasattr(self.dataset, "set_format"):
                 self.dataset.set_format(type="torch", columns=[self.tokens_column])  # type: ignore
 
-            if (
-                isinstance(dataset, str)
-                and hasattr(model, "tokenizer")
-                and model.tokenizer is not None
-            ):
-                validate_pretokenized_dataset_tokenizer(
-                    dataset_path=dataset, model_tokenizer=model.tokenizer
-                )
+            # if (
+            #     isinstance(dataset, str)
+            #     and hasattr(model, "tokenizer")
+            #     and model.tokenizer is not None
+            # ):
+            #     validate_pretokenized_dataset_tokenizer(
+            #         dataset_path=dataset, model_tokenizer=model.tokenizer
+            #     )
         else:
             print(
                 "Warning: Dataset is not tokenized. Pre-tokenizing will improve performance and allows for more control over special tokens. See https://jbloomaus.github.io/SAELens/training_saes/#pretokenizing-datasets for more info."
