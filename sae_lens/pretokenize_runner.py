@@ -290,39 +290,39 @@ class PretokenizeRunner:
             raise ValueError(
                 "Dataset has multiple splits. Must provide a 'split' param."
             )
-        if "llava" in self.cfg.tokenizer_name:
+        if "llava" in self.cfg.tokenizer_name and self.cfg.image_column_name is not None:
             processor = LlavaNextProcessor.from_pretrained(self.cfg.tokenizer_name)
             batch_size = 10000
-        total_examples = len(dataset)
-        num_batches = (total_examples + batch_size - 1) // batch_size  # 计算总批次数
+            total_examples = len(dataset)
+            num_batches = (total_examples + batch_size - 1) // batch_size  # 计算总批次数
 
-        for batch_num in range(num_batches):
-            start_idx = batch_num * batch_size
-            end_idx = min(start_idx + batch_size, total_examples)
-            print(f"Processing batch {batch_num+1}/{num_batches}, examples {start_idx+1}-{end_idx}")
+            for batch_num in range(num_batches):
+                start_idx = batch_num * batch_size
+                end_idx = min(start_idx + batch_size, total_examples)
+                print(f"Processing batch {batch_num+1}/{num_batches}, examples {start_idx+1}-{end_idx}")
 
-            # 处理当前批次
-            processed_dataset = preprocess_dataset(
-                dataset, processor, self.cfg
-            )
-            tokenized_dataset = processed_dataset
+                # 处理当前批次
+                processed_dataset = preprocess_dataset(
+                    dataset, processor, self.cfg
+                )
+                tokenized_dataset = processed_dataset
 
-            # 保存当前批次的数据集
-            if self.cfg.save_path is not None:
-                # 为每个批次创建一个子目录或文件名
-                batch_save_path = os.path.join(self.cfg.save_path, f"batch_{batch_num+1}")
-                os.makedirs(batch_save_path, exist_ok=True)
+                # 保存当前批次的数据集
+                if self.cfg.save_path is not None:
+                    # 为每个批次创建一个子目录或文件名
+                    batch_save_path = os.path.join(self.cfg.save_path, f"batch_{batch_num+1}")
+                    os.makedirs(batch_save_path, exist_ok=True)
 
-                tokenized_dataset.save_to_disk(batch_save_path)
-                metadata = metadata_from_config(self.cfg)
-                metadata_path = Path(batch_save_path) / "sae_lens.json"
-                with open(metadata_path, "w") as f:
-                    json.dump(metadata.__dict__, f, indent=2, ensure_ascii=False)
+                    tokenized_dataset.save_to_disk(batch_save_path)
+                    metadata = metadata_from_config(self.cfg)
+                    metadata_path = Path(batch_save_path) / "sae_lens.json"
+                    with open(metadata_path, "w") as f:
+                        json.dump(metadata.__dict__, f, indent=2, ensure_ascii=False)
 
-            # # 如果需要，将批次上传到 Hugging Face Hub
-            # if self.cfg.hf_repo_id is not None:
-            #     # 您可能需要修改 `push_to_hugging_face_hub` 函数以支持批次上传
-            #     push_to_hugging_face_hub(tokenized_dataset, self.cfg)
+                # # 如果需要，将批次上传到 Hugging Face Hub
+                # if self.cfg.hf_repo_id is not None:
+                #     # 您可能需要修改 `push_to_hugging_face_hub` 函数以支持批次上传
+                #     push_to_hugging_face_hub(tokenized_dataset, self.cfg)
         else: 
             tokenizer = AutoTokenizer.from_pretrained(self.cfg.tokenizer_name)
             tokenizer.model_max_length = sys.maxsize

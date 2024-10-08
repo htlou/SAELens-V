@@ -17,7 +17,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformer_lens.hook_points import HookedRootModule
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
-
+from torch.nn.utils.rnn import pad_sequence
 from sae_lens.config import (
     DTYPE_MAP,
     CacheActivationsRunnerConfig,
@@ -170,7 +170,7 @@ class ActivationsStore:
                 if isinstance(dataset, str)
                 else dataset
             )
-
+        # import pdb; pdb.set_trace()
         if isinstance(dataset, (Dataset, DatasetDict)):
             self.dataset = cast(Dataset | DatasetDict, self.dataset)
             n_samples = len(self.dataset)
@@ -224,7 +224,13 @@ class ActivationsStore:
 
         if self.is_dataset_tokenized:
             if "pixel_values" in dataset_sample.keys():
-                ds_context_size=self.context_size
+                columns_to_read=[self.tokens_column]
+                columns_to_read.append("pixel_values")
+                columns_to_read.append("attention_mask")
+                columns_to_read.append("image_sizes")
+                ds_context_size = len(dataset_sample[self.tokens_column])
+                if hasattr(self.dataset, "set_format"):
+                    self.dataset.set_format(type="torch", columns=columns_to_read)
             else:
                 ds_context_size = len(dataset_sample[self.tokens_column])
                 if ds_context_size != self.context_size:
@@ -232,8 +238,8 @@ class ActivationsStore:
                         f"pretokenized dataset has context_size {ds_context_size}, but the provided context_size is {self.context_size}."
                     )
             # TODO: investigate if this can work for iterable datasets, or if this is even worthwhile as a perf improvement
-            if hasattr(self.dataset, "set_format"):
-                self.dataset.set_format(type="torch", columns=[self.tokens_column])  # type: ignore
+                if hasattr(self.dataset, "set_format"):
+                    self.dataset.set_format(type="torch", columns=[self.tokens_column])  # type: ignore
 
             # if (
             #     isinstance(dataset, str)
@@ -260,15 +266,20 @@ class ActivationsStore:
         """
         Helper to iterate over the dataset while incrementing n_dataset_processed
         """
+        # import pdb; pdb.set_trace()
         for row in self.dataset:
             # typing datasets is difficult
-            yield row[self.tokens_column]  # type: ignore
+            if "pixel_values" in row.keys():
+                yield row
+            else:
+                yield row[self.tokens_column]  # type: ignore
             self.n_dataset_processed += 1
 
     def _iterate_raw_dataset_tokens(self) -> Generator[torch.Tensor, None, None]:
         """
         Helper to create an iterator which tokenizes raw text from the dataset on the fly
         """
+        Warning("This function is not used in the current implementation")
         for row in self._iterate_raw_dataset():
             tokens = (
                 self.model.to_tokens(
@@ -419,7 +430,8 @@ class ActivationsStore:
                     )
                 else:
                     sequences.append(next(self.iterable_sequences))
-
+        # import pdb; pdb.set_trace()
+        # padded_sequences = pad_sequence(sequences, batch_first=True)
         return torch.stack(sequences, dim=0).to(self.model.W_E.device)
 
     @torch.no_grad()
