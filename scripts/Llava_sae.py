@@ -55,7 +55,7 @@ cfg = LanguageModelSAERunnerConfig(
     dead_feature_window=1000,  # would effect resampling or ghost grads if we were using it.
     dead_feature_threshold=1e-4,  # would effect resampling or ghost grads if we were using it.
     # WANDB
-    log_to_wandb=True,  # always use wandb unless you are just testing code.
+    log_to_wandb=False,  # always use wandb unless you are just testing code.
     wandb_project="interp",
     wandb_log_frequency=30,
     eval_every_n_wandb_logs=20,

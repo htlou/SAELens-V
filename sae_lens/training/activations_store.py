@@ -505,23 +505,23 @@ class ActivationsStore:
                     prepend_bos=False,
                     **self.model_kwargs,
                 )[1]
-
+        # import pdb;pdb.set_trace()
         if isinstance(batch_tokens, dict):
             # 处理图片输入
             n_context=self.context_size
             n_batches = len(batch_tokens['pixel_values'])
             # 根据模型对图片的处理方式，确定合适的维度
-            activation_shape = layerwise_activations[self.hook_name].shape
-            _, n_patches, d_in = activation_shape
+            activation=layerwise_activations[self.hook_name]
+            _, n_patches, _ = activation.shape
             padding = n_context - n_patches
 
             # 如果需要填充
             if padding > 0:
                 # 使用 pad 填充，(0, 0) 表示对最后一个维度不进行填充，(0, padding) 表示对第二个维度填充到 n_context 长度
-                layerwise_activations[self.hook_name] = F.pad(layerwise_activations[self.hook_name], (0, 0, 0, padding), mode='constant', value=0)
+                activation= F.pad(activation, (0, 0, 0, padding), mode='constant', value=0)
             else:
                 # 如果不需要填充，或者当前维度大于 n_context，需要进行裁剪
-                layerwise_activations[self.hook_name] = layerwise_activations[self.hook_name][:, :n_context, :]
+                activation = activation[:, :n_context, :]
                 Warning("The activations are larger than the context size, so they will be truncated.")
             # 初始化 stacked_activations，形状与激活值匹配
             stacked_activations = torch.zeros((n_batches, n_context, 1, self.d_in))
@@ -534,24 +534,20 @@ class ActivationsStore:
             # 原有代码
 
         if self.hook_head_index is not None:
-            stacked_activations[:, :, 0] = layerwise_activations[self.hook_name][
+            stacked_activations[:, :, 0] = activation[
                 :, :, self.hook_head_index
             ]
         elif (
-            layerwise_activations[self.hook_name].ndim > 3
+            activation.ndim > 3
         ):  # if we have a head dimension
             try:
-                stacked_activations[:, :, 0] = layerwise_activations[
-                    self.hook_name
-                ].view(n_batches, n_context, -1)
+                stacked_activations[:, :, 0] = activation.view(n_batches, n_context, -1)
             except RuntimeError as e:
                 print(f"Error during view operation: {e}")
                 print("Attempting to use reshape instead...")
-                stacked_activations[:, :, 0] = layerwise_activations[
-                    self.hook_name
-                ].reshape(n_batches, n_context, -1)
+                stacked_activations[:, :, 0] = activation.reshape(n_batches, n_context, -1)
         else:
-            stacked_activations[:, :, 0] = layerwise_activations[self.hook_name]
+            stacked_activations[:, :, 0] = activation
 
         return stacked_activations
 
