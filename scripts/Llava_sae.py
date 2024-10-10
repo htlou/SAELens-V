@@ -48,7 +48,7 @@ cfg = LanguageModelSAERunnerConfig(
     # Activation Store Parameters
     n_batches_in_buffer=32,  # controls how many activations we store / shuffle.
     training_tokens=total_training_tokens,  # 100 million tokens is quite a few, but we want to see good stats. Get a coffee, come back.
-    store_batch_size_prompts=4,
+    store_batch_size_prompts=1,#batch_size in forward for it2t is only 1 now
     # Resampling protocol
     use_ghost_grads=False,  # we don't use ghost grads anymore.
     feature_sampling_window=1000,  # this controls our reporting of feature sparsity stats

@@ -78,14 +78,16 @@ def load_model(
         if HookedLlava is None:
             raise ValueError("HookedLlava is not installed")
         if hf_model is None:
-
+            Warning("no hf_model for hookllava")
             return HookedLlava.from_pretrained(
                 model_name=model_name, device=device, **model_from_pretrained_kwargs
             )
         else:
+            
+            
             return HookedLlava.from_pretrained(
                 model_name=model_name, hf_model=hf_model.language_model, 
-                device=device, **model_from_pretrained_kwargs
+                device=device,vision_tower = hf_model.vision_tower,multi_modal_projector = hf_model.multi_modal_projector, **model_from_pretrained_kwargs
             )
     else:  # pragma: no cover
         raise ValueError(f"Unknown model class: {model_class_name}")

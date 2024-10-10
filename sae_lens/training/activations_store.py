@@ -305,10 +305,10 @@ class ActivationsStore:
         if self.is_dataset_tokenized:
             for row in self._iterate_raw_dataset():
                 if type(row)==dict:
-                    input_ids=torch.tensor(row["input_ids"],dtype=torch.long,device=self.device,requires_grad=False)
-                    pixel_values=torch.tensor(row["pixel_values"],dtype=torch.long,device=self.device,requires_grad=False)
-                    attention_mask=torch.tensor(row["attention_mask"],dtype=torch.long,device=self.device,requires_grad=False)
-                    image_sizes=torch.tensor(row["image_sizes"],dtype=torch.long,device=self.device,requires_grad=False)
+                    input_ids=row["input_ids"].clone().detach()
+                    pixel_values=row["pixel_values"].clone().detach()
+                    attention_mask=row["attention_mask"].clone().detach()
+                    image_sizes=row["image_sizes"].clone().detach()
                     yield input_ids,pixel_values,attention_mask,image_sizes
                 else:
                     yield torch.tensor(
