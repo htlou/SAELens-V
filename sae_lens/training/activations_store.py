@@ -304,12 +304,19 @@ class ActivationsStore:
         # We assume that all necessary BOS/EOS/SEP tokens have been added during pretokenization.
         if self.is_dataset_tokenized:
             for row in self._iterate_raw_dataset():
-                yield torch.tensor(
-                    row,
-                    dtype=torch.long,
-                    device=self.device,
-                    requires_grad=False,
-                )
+                if type(row)==dict:
+                    input_ids=torch.tensor(row["input_ids"],dtype=torch.long,device=self.device,requires_grad=False)
+                    pixel_values=torch.tensor(row["pixel_values"],dtype=torch.long,device=self.device,requires_grad=False)
+                    attention_mask=torch.tensor(row["attention_mask"],dtype=torch.long,device=self.device,requires_grad=False)
+                    image_sizes=torch.tensor(row["image_sizes"],dtype=torch.long,device=self.device,requires_grad=False)
+                    yield input_ids,pixel_values,attention_mask,image_sizes
+                else:
+                    yield torch.tensor(
+                        row,
+                        dtype=torch.long,
+                        device=self.device,
+                        requires_grad=False,
+                    )
         # If the dataset isn't tokenized, we'll tokenize, concat, and batch on the fly
         else:
             tokenizer = getattr(self.model, "tokenizer", None)
@@ -430,18 +437,46 @@ class ActivationsStore:
                     )
                 else:
                     sequences.append(next(self.iterable_sequences))
+        # import pdb; pdb.set_trace()           
+        if len(sequences[0])>=4:
+            input_ids_list = []
+            pixel_values_list = []
+            attention_mask_list = []
+            image_sizes_list = []
+
+            for seq in sequences:
+                # 假设 seq 是一个元组，包含四个张量
+                input_ids_list.append(seq[0].squeeze(0))  # 移除批次维度
+                pixel_values_list.append(seq[1])  # 如果需要，可能也需要处理
+                attention_mask_list.append(seq[2].squeeze(0))
+                image_sizes_list.append(seq[3])  # 如果需要，可能也需要处理
+            from torch.nn.utils.rnn import pad_sequence
+
+            # 获取 pad_token_id，通常为 tokenizer.pad_token_id，如果没有设置，则默认设为 0
+            pad_token_id = 0
+
+            input_ids_batch = pad_sequence(input_ids_list, batch_first=True, padding_value=pad_token_id).to(self.model.W_E.device)
+            attention_mask_batch = pad_sequence(attention_mask_list, batch_first=True, padding_value=0).to(self.model.W_E.device)
+            input_ids_batch = torch.stack(input_ids_list, dim=0).to(self.model.W_E.device)
+            pixel_values_batch = torch.stack(pixel_values_list, dim=0).to(self.model.W_E.device)
+            attention_mask_batch = torch.stack(attention_mask_list, dim=0).to(self.model.W_E.device)
+            image_sizes_batch = torch.stack(image_sizes_list, dim=0).to(self.model.W_E.device)
+            
+            return input_ids_batch, pixel_values_batch, attention_mask_batch, image_sizes_batch
         # import pdb; pdb.set_trace()
         # padded_sequences = pad_sequence(sequences, batch_first=True)
         return torch.stack(sequences, dim=0).to(self.model.W_E.device)
 
     @torch.no_grad()
-    def get_activations(self, batch_tokens: torch.Tensor):
+    def get_activations(self, batch_tokens: torch.Tensor|dict):
         """
         Returns activations of shape (batches, context, num_layers, d_in)
 
         d_in may result from a concatenated head dimension.
         """
+        import pdb;pdb.set_trace()
 
+            
         # Setup autocast if using
         if self.autocast_lm:
             autocast_if_enabled = torch.autocast(
@@ -453,13 +488,22 @@ class ActivationsStore:
             autocast_if_enabled = contextlib.nullcontext()
 
         with autocast_if_enabled:
-            layerwise_activations = self.model.run_with_cache(
+            if type(batch_tokens)==dict:
+                layerwise_activations = self.model.run_with_cache(
                 batch_tokens,
                 names_filter=[self.hook_name],
                 stop_at_layer=self.hook_layer + 1,
                 prepend_bos=False,
                 **self.model_kwargs,
             )[1]
+            else:
+                layerwise_activations = self.model.run_with_cache(
+                    batch_tokens,
+                    names_filter=[self.hook_name],
+                    stop_at_layer=self.hook_layer + 1,
+                    prepend_bos=False,
+                    **self.model_kwargs,
+                )[1]
 
         n_batches, n_context = batch_tokens.shape
 

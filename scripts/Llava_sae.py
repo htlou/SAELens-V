@@ -3,8 +3,8 @@ import os
 import sys
 sys.path.append("/data/changye/SAELens-V")
 from sae_lens import LanguageModelSAERunnerConfig, SAETrainingRunner
-total_training_steps = 30_000  # probably we should do more
-batch_size = 4096
+total_training_steps = 20000 # probably we should do more
+batch_size = 8192
 total_training_tokens = total_training_steps * batch_size
 
 lr_warm_up_steps = 0
@@ -20,12 +20,12 @@ cfg = LanguageModelSAERunnerConfig(
     hook_name="blocks.8.hook_resid_post",  # A valid hook point (see more details here: https://neelnanda-io.github.io/TransformerLens/generated/demos/Main_Demo.html#Hook-Points)
     hook_layer=8,  # Only one layer in the model.
     d_in=4096,  # the width of the mlp output.
-    dataset_path="/data/changye/obelic10k-tokenized-text-llava",  # this is a tokenized language dataset on Huggingface for the Tiny Stories corpus.
+    dataset_path="/data/changye/combined_tokenized-llava/obelic10k-tokenized-llava/batch_1",  # this is a tokenized language dataset on Huggingface for the Tiny Stories corpus.
     is_dataset_tokenized=True,
     streaming=True,  # we could pre-download the token dataset if it was small.
     # SAE Parameters
     mse_loss_normalization=None,  # We won't normalize the mse loss,
-    expansion_factor=32,  # the width of the SAE. Larger will result in better stats but slower training.
+    expansion_factor=16,  # the width of the SAE. Larger will result in better stats but slower training.
     b_dec_init_method="zeros",  # The geometric median can be used to initialize the decoder weights.
     apply_b_dec_to_input=False,  # We won't apply the decoder weights to the input.
     normalize_sae_decoder=False,
@@ -46,7 +46,7 @@ cfg = LanguageModelSAERunnerConfig(
     train_batch_size_tokens=batch_size,
     context_size=2048,  # will control the lenght of the prompts we feed to the model. Larger is better but slower. so for the tutorial we'll use a short one.
     # Activation Store Parameters
-    n_batches_in_buffer=64,  # controls how many activations we store / shuffle.
+    n_batches_in_buffer=32,  # controls how many activations we store / shuffle.
     training_tokens=total_training_tokens,  # 100 million tokens is quite a few, but we want to see good stats. Get a coffee, come back.
     store_batch_size_prompts=4,
     # Resampling protocol
@@ -62,7 +62,7 @@ cfg = LanguageModelSAERunnerConfig(
     # Misc
     device=device,
     seed=42,
-    n_checkpoints=0,
+    n_checkpoints=20,
     checkpoint_path="checkpoints",
     dtype="float32",
     model_from_pretrained_kwargs={"n_devices": 7},
