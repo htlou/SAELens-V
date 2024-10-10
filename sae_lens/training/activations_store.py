@@ -446,23 +446,21 @@ class ActivationsStore:
 
             for seq in sequences:
                 # 假设 seq 是一个元组，包含四个张量
-                input_ids_list.append(seq[0].squeeze(0))  # 移除批次维度
+                input_ids_list.append(seq[0])  # 移除批次维度
                 pixel_values_list.append(seq[1])  # 如果需要，可能也需要处理
-                attention_mask_list.append(seq[2].squeeze(0))
+                attention_mask_list.append(seq[2])
                 image_sizes_list.append(seq[3])  # 如果需要，可能也需要处理
-            from torch.nn.utils.rnn import pad_sequence
 
-            # 获取 pad_token_id，通常为 tokenizer.pad_token_id，如果没有设置，则默认设为 0
-            pad_token_id = 0
-
-            input_ids_batch = pad_sequence(input_ids_list, batch_first=True, padding_value=pad_token_id).to(self.model.W_E.device)
-            attention_mask_batch = pad_sequence(attention_mask_list, batch_first=True, padding_value=0).to(self.model.W_E.device)
-            input_ids_batch = torch.stack(input_ids_list, dim=0).to(self.model.W_E.device)
-            pixel_values_batch = torch.stack(pixel_values_list, dim=0).to(self.model.W_E.device)
-            attention_mask_batch = torch.stack(attention_mask_list, dim=0).to(self.model.W_E.device)
-            image_sizes_batch = torch.stack(image_sizes_list, dim=0).to(self.model.W_E.device)
             
-            return input_ids_batch, pixel_values_batch, attention_mask_batch, image_sizes_batch
+            
+            batch_tokens={
+                "input_ids":input_ids_list,
+                "pixel_values":pixel_values_list,
+                "attention_mask":attention_mask_list,
+                "image_sizes":image_sizes_list,
+            }
+            
+            return batch_tokens
         # import pdb; pdb.set_trace()
         # padded_sequences = pad_sequence(sequences, batch_first=True)
         return torch.stack(sequences, dim=0).to(self.model.W_E.device)
@@ -474,7 +472,7 @@ class ActivationsStore:
 
         d_in may result from a concatenated head dimension.
         """
-        import pdb;pdb.set_trace()
+        # import pdb;pdb.set_trace()
 
             
         # Setup autocast if using
@@ -494,6 +492,8 @@ class ActivationsStore:
                 names_filter=[self.hook_name],
                 stop_at_layer=self.hook_layer + 1,
                 prepend_bos=False,
+                vision=True,
+                model_inputs=batch_tokens,
                 **self.model_kwargs,
             )[1]
             else:
@@ -613,7 +613,14 @@ class ActivationsStore:
             # move batch toks to gpu for model
             refill_batch_tokens = self.get_batch_tokens(
                 raise_at_epoch_end=raise_on_epoch_end
-            ).to(self.model.cfg.device)
+            )
+            if type(refill_batch_tokens)!=dict:
+                refill_batch_tokens=refill_batch_tokens.to(self.model.cfg.device) 
+            else:
+                refill_batch_tokens["input_ids"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["input_ids"]]
+                refill_batch_tokens["pixel_values"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["pixel_values"]]
+                refill_batch_tokens["attention_mask"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["attention_mask"]]
+                refill_batch_tokens["image_sizes"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["image_sizes"]]
             refill_activations = self.get_activations(refill_batch_tokens)
             # move acts back to cpu
             refill_activations.to(self.device)
