@@ -3,7 +3,7 @@ import os
 import sys
 sys.path.append("/data/changye/SAELens-V")
 from sae_lens import LanguageModelSAERunnerConfig, SAETrainingRunner
-total_training_steps = 20000 # probably we should do more
+total_training_steps = 15000 # probably we should do more
 batch_size = 8192
 total_training_tokens = total_training_steps * batch_size
 
@@ -44,7 +44,7 @@ cfg = LanguageModelSAERunnerConfig(
     l1_warm_up_steps=l1_warm_up_steps,  # this can help avoid too many dead features initially.
     lp_norm=1.0,  # the L1 penalty (and not a Lp for p < 1)
     train_batch_size_tokens=batch_size,
-    context_size=2048,  # will control the lenght of the prompts we feed to the model. Larger is better but slower. so for the tutorial we'll use a short one.
+    context_size=4096,  # will control the lenght of the prompts we feed to the model. Larger is better but slower. so for the tutorial we'll use a short one.
     # Activation Store Parameters
     n_batches_in_buffer=32,  # controls how many activations we store / shuffle.
     training_tokens=total_training_tokens,  # 100 million tokens is quite a few, but we want to see good stats. Get a coffee, come back.

@@ -18,6 +18,7 @@ from tqdm import tqdm
 from transformer_lens.hook_points import HookedRootModule
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
 from torch.nn.utils.rnn import pad_sequence
+import torch.nn.functional as F
 from sae_lens.config import (
     DTYPE_MAP,
     CacheActivationsRunnerConfig,
@@ -505,9 +506,32 @@ class ActivationsStore:
                     **self.model_kwargs,
                 )[1]
 
-        n_batches, n_context = batch_tokens.shape
+        if isinstance(batch_tokens, dict):
+            # 处理图片输入
+            n_context=self.context_size
+            n_batches = len(batch_tokens['pixel_values'])
+            # 根据模型对图片的处理方式，确定合适的维度
+            activation_shape = layerwise_activations[self.hook_name].shape
+            _, n_patches, d_in = activation_shape
+            padding = n_context - n_patches
 
-        stacked_activations = torch.zeros((n_batches, n_context, 1, self.d_in))
+            # 如果需要填充
+            if padding > 0:
+                # 使用 pad 填充，(0, 0) 表示对最后一个维度不进行填充，(0, padding) 表示对第二个维度填充到 n_context 长度
+                layerwise_activations[self.hook_name] = F.pad(layerwise_activations[self.hook_name], (0, 0, 0, padding), mode='constant', value=0)
+            else:
+                # 如果不需要填充，或者当前维度大于 n_context，需要进行裁剪
+                layerwise_activations[self.hook_name] = layerwise_activations[self.hook_name][:, :n_context, :]
+                Warning("The activations are larger than the context size, so they will be truncated.")
+            # 初始化 stacked_activations，形状与激活值匹配
+            stacked_activations = torch.zeros((n_batches, n_context, 1, self.d_in))
+            
+        else:
+            # 原有的文本输入处理方式
+            n_batches, n_context = batch_tokens.shape
+            stacked_activations = torch.zeros((n_batches, n_context, 1, self.d_in))
+            # 处理激活值
+            # 原有代码
 
         if self.hook_head_index is not None:
             stacked_activations[:, :, 0] = layerwise_activations[self.hook_name][
