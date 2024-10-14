@@ -580,6 +580,7 @@ class PretokenizeRunnerConfig:
     num_proc: int = 4
     context_size: int = 128
     column_name: str = "text"
+    image_column_name: Optional[str]="images"
     shuffle: bool = True
     seed: int | None = None
     streaming: bool = False
@@ -598,3 +599,6 @@ class PretokenizeRunnerConfig:
     hf_num_shards: int = 64
     hf_revision: str = "main"
     hf_is_private_repo: bool = False
+    
+
+    

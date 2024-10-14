@@ -7,7 +7,7 @@ from typing import Any, Generator, Iterator, Literal, cast
 
 import numpy as np
 import torch
-from datasets import Dataset, DatasetDict, IterableDataset, load_dataset
+from datasets import Dataset, DatasetDict, IterableDataset, load_dataset,load_from_disk
 from huggingface_hub import hf_hub_download
 from huggingface_hub.utils._errors import HfHubHTTPError
 from requests import HTTPError
@@ -17,7 +17,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformer_lens.hook_points import HookedRootModule
 from transformers import AutoTokenizer, PreTrainedTokenizerBase
-
+from torch.nn.utils.rnn import pad_sequence
+import torch.nn.functional as F
 from sae_lens.config import (
     DTYPE_MAP,
     CacheActivationsRunnerConfig,
@@ -151,17 +152,26 @@ class ActivationsStore:
         if model_kwargs is None:
             model_kwargs = {}
         self.model_kwargs = model_kwargs
-        self.dataset = (
-            load_dataset(
-                dataset,
-                split="train",
-                streaming=streaming,
-                trust_remote_code=dataset_trust_remote_code,  # type: ignore
+        try:
+            self.dataset = (
+                load_dataset(
+                    dataset,
+                    split="train",
+                    streaming=streaming,
+                    trust_remote_code=dataset_trust_remote_code,  # type: ignore
+                )
+                if isinstance(dataset, str)
+                else dataset
             )
-            if isinstance(dataset, str)
-            else dataset
-        )
-
+        except Exception as e:
+            self.dataset = (
+                load_from_disk(
+                    dataset,
+                )
+                if isinstance(dataset, str)
+                else dataset
+            )
+        # import pdb; pdb.set_trace()
         if isinstance(dataset, (Dataset, DatasetDict)):
             self.dataset = cast(Dataset | DatasetDict, self.dataset)
             n_samples = len(self.dataset)
@@ -212,24 +222,34 @@ class ActivationsStore:
             raise ValueError(
                 "Dataset must have a 'tokens', 'input_ids', 'text', or 'problem' column."
             )
-        if self.is_dataset_tokenized:
-            ds_context_size = len(dataset_sample[self.tokens_column])
-            if ds_context_size != self.context_size:
-                raise ValueError(
-                    f"pretokenized dataset has context_size {ds_context_size}, but the provided context_size is {self.context_size}."
-                )
-            # TODO: investigate if this can work for iterable datasets, or if this is even worthwhile as a perf improvement
-            if hasattr(self.dataset, "set_format"):
-                self.dataset.set_format(type="torch", columns=[self.tokens_column])  # type: ignore
 
-            if (
-                isinstance(dataset, str)
-                and hasattr(model, "tokenizer")
-                and model.tokenizer is not None
-            ):
-                validate_pretokenized_dataset_tokenizer(
-                    dataset_path=dataset, model_tokenizer=model.tokenizer
-                )
+        if self.is_dataset_tokenized:
+            if "pixel_values" in dataset_sample.keys():
+                columns_to_read=[self.tokens_column]
+                columns_to_read.append("pixel_values")
+                columns_to_read.append("attention_mask")
+                columns_to_read.append("image_sizes")
+                ds_context_size = len(dataset_sample[self.tokens_column])
+                if hasattr(self.dataset, "set_format"):
+                    self.dataset.set_format(type="torch", columns=columns_to_read)
+            else:
+                ds_context_size = len(dataset_sample[self.tokens_column])
+                if ds_context_size != self.context_size:
+                    raise ValueError(
+                        f"pretokenized dataset has context_size {ds_context_size}, but the provided context_size is {self.context_size}."
+                    )
+            # TODO: investigate if this can work for iterable datasets, or if this is even worthwhile as a perf improvement
+                if hasattr(self.dataset, "set_format"):
+                    self.dataset.set_format(type="torch", columns=[self.tokens_column])  # type: ignore
+
+            # if (
+            #     isinstance(dataset, str)
+            #     and hasattr(model, "tokenizer")
+            #     and model.tokenizer is not None
+            # ):
+            #     validate_pretokenized_dataset_tokenizer(
+            #         dataset_path=dataset, model_tokenizer=model.tokenizer
+            #     )
         else:
             print(
                 "Warning: Dataset is not tokenized. Pre-tokenizing will improve performance and allows for more control over special tokens. See https://jbloomaus.github.io/SAELens/training_saes/#pretokenizing-datasets for more info."
@@ -247,15 +267,20 @@ class ActivationsStore:
         """
         Helper to iterate over the dataset while incrementing n_dataset_processed
         """
+        # import pdb; pdb.set_trace()
         for row in self.dataset:
             # typing datasets is difficult
-            yield row[self.tokens_column]  # type: ignore
+            if "pixel_values" in row.keys():
+                yield row
+            else:
+                yield row[self.tokens_column]  # type: ignore
             self.n_dataset_processed += 1
 
     def _iterate_raw_dataset_tokens(self) -> Generator[torch.Tensor, None, None]:
         """
         Helper to create an iterator which tokenizes raw text from the dataset on the fly
         """
+        Warning("This function is not used in the current implementation")
         for row in self._iterate_raw_dataset():
             tokens = (
                 self.model.to_tokens(
@@ -280,12 +305,19 @@ class ActivationsStore:
         # We assume that all necessary BOS/EOS/SEP tokens have been added during pretokenization.
         if self.is_dataset_tokenized:
             for row in self._iterate_raw_dataset():
-                yield torch.tensor(
-                    row,
-                    dtype=torch.long,
-                    device=self.device,
-                    requires_grad=False,
-                )
+                if type(row)==dict:
+                    input_ids=row["input_ids"].clone().detach()
+                    pixel_values=row["pixel_values"].clone().detach()
+                    attention_mask=row["attention_mask"].clone().detach()
+                    image_sizes=row["image_sizes"].clone().detach()
+                    yield input_ids,pixel_values,attention_mask,image_sizes
+                else:
+                    yield torch.tensor(
+                        row,
+                        dtype=torch.long,
+                        device=self.device,
+                        requires_grad=False,
+                    )
         # If the dataset isn't tokenized, we'll tokenize, concat, and batch on the fly
         else:
             tokenizer = getattr(self.model, "tokenizer", None)
@@ -406,17 +438,44 @@ class ActivationsStore:
                     )
                 else:
                     sequences.append(next(self.iterable_sequences))
+        # import pdb; pdb.set_trace()           
+        if len(sequences[0])>=4:
+            input_ids_list = []
+            pixel_values_list = []
+            attention_mask_list = []
+            image_sizes_list = []
 
+            for seq in sequences:
+                # 假设 seq 是一个元组，包含四个张量
+                input_ids_list.append(seq[0])  # 移除批次维度
+                pixel_values_list.append(seq[1])  # 如果需要，可能也需要处理
+                attention_mask_list.append(seq[2])
+                image_sizes_list.append(seq[3])  # 如果需要，可能也需要处理
+
+            
+            
+            batch_tokens={
+                "input_ids":input_ids_list,
+                "pixel_values":pixel_values_list,
+                "attention_mask":attention_mask_list,
+                "image_sizes":image_sizes_list,
+            }
+            
+            return batch_tokens
+        # import pdb; pdb.set_trace()
+        # padded_sequences = pad_sequence(sequences, batch_first=True)
         return torch.stack(sequences, dim=0).to(self.model.W_E.device)
 
     @torch.no_grad()
-    def get_activations(self, batch_tokens: torch.Tensor):
+    def get_activations(self, batch_tokens: torch.Tensor|dict):
         """
         Returns activations of shape (batches, context, num_layers, d_in)
 
         d_in may result from a concatenated head dimension.
         """
+        # import pdb;pdb.set_trace()
 
+            
         # Setup autocast if using
         if self.autocast_lm:
             autocast_if_enabled = torch.autocast(
@@ -428,37 +487,67 @@ class ActivationsStore:
             autocast_if_enabled = contextlib.nullcontext()
 
         with autocast_if_enabled:
-            layerwise_activations = self.model.run_with_cache(
+            if type(batch_tokens)==dict:
+                layerwise_activations = self.model.run_with_cache(
                 batch_tokens,
                 names_filter=[self.hook_name],
                 stop_at_layer=self.hook_layer + 1,
                 prepend_bos=False,
+                vision=True,
+                model_inputs=batch_tokens,
                 **self.model_kwargs,
             )[1]
+            else:
+                layerwise_activations = self.model.run_with_cache(
+                    batch_tokens,
+                    names_filter=[self.hook_name],
+                    stop_at_layer=self.hook_layer + 1,
+                    prepend_bos=False,
+                    **self.model_kwargs,
+                )[1]
+        # import pdb;pdb.set_trace()
+        if isinstance(batch_tokens, dict):
+            # 处理图片输入
+            n_context=self.context_size
+            n_batches = len(batch_tokens['pixel_values'])
+            # 根据模型对图片的处理方式，确定合适的维度
+            activation=layerwise_activations[self.hook_name]
+            _, n_patches, _ = activation.shape
+            padding = n_context - n_patches
 
-        n_batches, n_context = batch_tokens.shape
-
-        stacked_activations = torch.zeros((n_batches, n_context, 1, self.d_in))
+            # 如果需要填充
+            if padding > 0:
+                # 使用 pad 填充，(0, 0) 表示对最后一个维度不进行填充，(0, padding) 表示对第二个维度填充到 n_context 长度
+                activation= F.pad(activation, (0, 0, 0, padding), mode='constant', value=0)
+            else:
+                # 如果不需要填充，或者当前维度大于 n_context，需要进行裁剪
+                activation = activation[:, :n_context, :]
+                Warning("The activations are larger than the context size, so they will be truncated.")
+            # 初始化 stacked_activations，形状与激活值匹配
+            stacked_activations = torch.zeros((n_batches, n_context, 1, self.d_in))
+            
+        else:
+            # 原有的文本输入处理方式
+            n_batches, n_context = batch_tokens.shape
+            stacked_activations = torch.zeros((n_batches, n_context, 1, self.d_in))
+            # 处理激活值
+            # 原有代码
 
         if self.hook_head_index is not None:
-            stacked_activations[:, :, 0] = layerwise_activations[self.hook_name][
+            stacked_activations[:, :, 0] = activation[
                 :, :, self.hook_head_index
             ]
         elif (
-            layerwise_activations[self.hook_name].ndim > 3
+            activation.ndim > 3
         ):  # if we have a head dimension
             try:
-                stacked_activations[:, :, 0] = layerwise_activations[
-                    self.hook_name
-                ].view(n_batches, n_context, -1)
+                stacked_activations[:, :, 0] = activation.view(n_batches, n_context, -1)
             except RuntimeError as e:
                 print(f"Error during view operation: {e}")
                 print("Attempting to use reshape instead...")
-                stacked_activations[:, :, 0] = layerwise_activations[
-                    self.hook_name
-                ].reshape(n_batches, n_context, -1)
+                stacked_activations[:, :, 0] = activation.reshape(n_batches, n_context, -1)
         else:
-            stacked_activations[:, :, 0] = layerwise_activations[self.hook_name]
+            stacked_activations[:, :, 0] = activation
 
         return stacked_activations
 
@@ -544,7 +633,14 @@ class ActivationsStore:
             # move batch toks to gpu for model
             refill_batch_tokens = self.get_batch_tokens(
                 raise_at_epoch_end=raise_on_epoch_end
-            ).to(self.model.cfg.device)
+            )
+            if type(refill_batch_tokens)!=dict:
+                refill_batch_tokens=refill_batch_tokens.to(self.model.cfg.device) 
+            else:
+                refill_batch_tokens["input_ids"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["input_ids"]]
+                refill_batch_tokens["pixel_values"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["pixel_values"]]
+                refill_batch_tokens["attention_mask"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["attention_mask"]]
+                refill_batch_tokens["image_sizes"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["image_sizes"]]
             refill_activations = self.get_activations(refill_batch_tokens)
             # move acts back to cpu
             refill_activations.to(self.device)
