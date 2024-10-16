@@ -27,7 +27,22 @@ from sae_lens.config import (
 )
 from sae_lens.sae import SAE
 from sae_lens.tokenization_and_batching import concat_and_batch_sequences
+import pynvml
 
+GPU_THRESHOLD = 0.5
+
+# 初始化 NVML
+pynvml.nvmlInit()
+num_gpus =7
+
+def get_available_gpu(threshold=GPU_THRESHOLD):
+    for i in range(num_gpus):
+        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+        mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+        utilization = mem_info.used / mem_info.total
+        if utilization < threshold:
+            return i
+    return None  # 如果所有 GPU 都超过了阈值
 
 # TODO: Make an activation store config class to be consistent with the rest of the code.
 class ActivationsStore:
@@ -484,6 +499,7 @@ class ActivationsStore:
                 enabled=self.autocast_lm,
             )
         else:
+            #llava
             autocast_if_enabled = contextlib.nullcontext()
 
         with autocast_if_enabled:
@@ -567,7 +583,9 @@ class ActivationsStore:
         d_in = self.d_in
         total_size = batch_size * n_batches_in_buffer
         num_layers = 1
-
+        
+        self.device="cpu"
+        
         if self.cached_activations_path is not None:
             # Load the activations from disk
             buffer_size = total_size * context_size
@@ -642,6 +660,14 @@ class ActivationsStore:
                 refill_batch_tokens["attention_mask"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["attention_mask"]]
                 refill_batch_tokens["image_sizes"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["image_sizes"]]
             refill_activations = self.get_activations(refill_batch_tokens)
+            # gpu_id = get_available_gpu()
+            # if gpu_id is not None:
+            #     self.device = torch.device(f'cuda:{gpu_id}')
+            #     print("Using GPU", gpu_id)
+            # else:
+            #     # 如果所有 GPU 都超过阈值，可以选择等待或使用 CPU
+            # self.device = torch.device('cpu')
+                # print("All GPUs are busy, using CPU")
             # move acts back to cpu
             refill_activations.to(self.device)
             new_buffer[

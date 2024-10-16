@@ -44,6 +44,8 @@ def load_model(
             hf_model = AutoModelForSeq2SeqLM.from_pretrained(local_model_path)
     else:
         hf_model = None
+        
+
     if model_class_name == "HookedTransformer":
         return HookedTransformer.from_pretrained_no_processing(
             model_name=model_name, device=device, **model_from_pretrained_kwargs
@@ -83,11 +85,15 @@ def load_model(
                 model_name=model_name, device=device, **model_from_pretrained_kwargs
             )
         else:
-            
-            
-            return HookedLlava.from_pretrained(
+            vision_tower=hf_model.vision_tower
+            multi_modal_projector = hf_model.multi_modal_projector
+            model=HookedLlava.from_pretrained(
                 model_name=model_name, hf_model=hf_model.language_model, 
-                device=device,vision_tower = hf_model.vision_tower,multi_modal_projector = hf_model.multi_modal_projector, **model_from_pretrained_kwargs
+                device=device,vision_tower = vision_tower,multi_modal_projector =multi_modal_projector, **model_from_pretrained_kwargs
             )
+            del hf_model
+            torch.cuda.empty_cache()
+            print("clear hf model")
+            return model
     else:  # pragma: no cover
         raise ValueError(f"Unknown model class: {model_class_name}")

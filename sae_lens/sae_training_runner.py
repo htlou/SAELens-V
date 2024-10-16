@@ -102,7 +102,7 @@ class SAETrainingRunner:
             save_checkpoint_fn=self.save_checkpoint,
             cfg=self.cfg,
         )
-
+        # import pdb; pdb.set_trace()
         self._compile_if_needed()
         sae = self.run_trainer_with_interruption_handling(trainer)
 
