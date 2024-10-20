@@ -185,21 +185,30 @@ def get_downstream_reconstruction_metrics(
 
     metrics: dict[str, float] = {}
     for metric_name, metric_values in metrics_dict.items():
-        metrics[f"metrics/{metric_name}"] = torch.cat(metric_values).mean().item()
+        try:
+            metrics[f"metrics/{metric_name}"] = torch.cat(metric_values).mean().item()
+        except Exception as e:
+            print("Error in metric:", metric_name)
 
     if compute_kl:
-        metrics["metrics/kl_div_score"] = (
-            metrics["metrics/kl_div_with_ablation"] - metrics["metrics/kl_div_with_sae"]
-        ) / metrics["metrics/kl_div_with_ablation"]
+        try:
+            metrics["metrics/kl_div_score"] = (
+                metrics["metrics/kl_div_with_ablation"] - metrics["metrics/kl_div_with_sae"]
+            ) / metrics["metrics/kl_div_with_ablation"]
+        except Exception as e:
+            print("Error in KL score calculation")
 
     if compute_ce_loss:
-        metrics["metrics/ce_loss_score"] = (
-            metrics["metrics/ce_loss_with_ablation"]
-            - metrics["metrics/ce_loss_with_sae"]
-        ) / (
-            metrics["metrics/ce_loss_with_ablation"]
-            - metrics["metrics/ce_loss_without_sae"]
-        )
+        try:
+            metrics["metrics/ce_loss_score"] = (
+                metrics["metrics/ce_loss_with_ablation"]
+                - metrics["metrics/ce_loss_with_sae"]
+            ) / (
+                metrics["metrics/ce_loss_with_ablation"]
+                - metrics["metrics/ce_loss_without_sae"]
+            )
+        except Exception as e:
+            print("Error in CE loss score calculation")
 
     return metrics
 

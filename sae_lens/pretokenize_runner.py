@@ -126,12 +126,11 @@ def process_image_list(urls_list):
         image_list = []
         for url in urls:
             if url!=None:
-                full_path = os.path.join("/data/changye/", url)
+                full_path = os.path.join(url)
             else:
                 image_list.append(None)
                 continue
             try:
-
                 image = Image.open(full_path)
                 if image.mode == 'P':
                     image = image.convert('RGBA')
@@ -165,15 +164,24 @@ def process_examples(example, processor, cfg):
         images_in_prompt = []
 
         for text, image in zip(texts, images):
+            full=True
             if text is not None:
                 conversation_content.append({"type": "text", "text": text})
             elif image is not None:
                 conversation_content.append({"type": "image"})
                 images_in_prompt.append(image)
             else:
-                print("none!")
-                continue
-
+                print("None!")
+                full=False
+                break
+        if full ==False:
+            continue
+        if len(images_in_prompt)>4 :
+            print("too large")
+            continue
+        if len(images_in_prompt)==0 :
+            print("no image")
+            continue
         # 构建对话
         conversation = [
             {
@@ -200,6 +208,8 @@ def process_examples(example, processor, cfg):
         result["attention_mask"].append(attention_mask)
         result["image_sizes"].append(image_sizes)
 
+    
+    
     return result
 
 
@@ -292,7 +302,7 @@ class PretokenizeRunner:
             )
         if "llava" in self.cfg.tokenizer_name and self.cfg.image_column_name is not None:
             processor = LlavaNextProcessor.from_pretrained(self.cfg.tokenizer_name)
-            batch_size = 10000
+            batch_size = 100000
             total_examples = len(dataset)
             num_batches = (total_examples + batch_size - 1) // batch_size  # 计算总批次数
 
@@ -318,7 +328,10 @@ class PretokenizeRunner:
                     metadata_path = Path(batch_save_path) / "sae_lens.json"
                     with open(metadata_path, "w") as f:
                         json.dump(metadata.__dict__, f, indent=2, ensure_ascii=False)
-
+                try:
+                    print(len(tokenized_dataset))
+                except:
+                    pass
                 # # 如果需要，将批次上传到 Hugging Face Hub
                 # if self.cfg.hf_repo_id is not None:
                 #     # 您可能需要修改 `push_to_hugging_face_hub` 函数以支持批次上传
@@ -330,12 +343,12 @@ class PretokenizeRunner:
                 cast(Dataset, dataset), tokenizer, self.cfg
             )
 
-        if self.cfg.save_path is not None:
-            tokenized_dataset.save_to_disk(self.cfg.save_path)
-            metadata = metadata_from_config(self.cfg)
-            metadata_path = Path(self.cfg.save_path) / "sae_lens.json"
-            with open(metadata_path, "w") as f:
-                json.dump(metadata.__dict__, f, indent=2, ensure_ascii=False)
+            if self.cfg.save_path is not None:
+                tokenized_dataset.save_to_disk(self.cfg.save_path)
+                metadata = metadata_from_config(self.cfg)
+                metadata_path = Path(self.cfg.save_path) / "sae_lens.json"
+                with open(metadata_path, "w") as f:
+                    json.dump(metadata.__dict__, f, indent=2, ensure_ascii=False)
 
         # if self.cfg.hf_repo_id is not None:
         #     push_to_hugging_face_hub(tokenized_dataset, self.cfg)

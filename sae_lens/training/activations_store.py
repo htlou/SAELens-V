@@ -186,6 +186,7 @@ class ActivationsStore:
                 if isinstance(dataset, str)
                 else dataset
             )
+        self.shuffle_input_dataset(seed=42)
         # import pdb; pdb.set_trace()
         if isinstance(dataset, (Dataset, DatasetDict)):
             self.dataset = cast(Dataset | DatasetDict, self.dataset)
@@ -216,7 +217,7 @@ class ActivationsStore:
         self.n_dataset_processed = 0
 
         self.estimated_norm_scaling_factor = 1.0
-
+        
         # Check if dataset is tokenized
         dataset_sample = next(iter(self.dataset))
 
@@ -321,10 +322,26 @@ class ActivationsStore:
         if self.is_dataset_tokenized:
             for row in self._iterate_raw_dataset():
                 if type(row)==dict:
-                    input_ids=row["input_ids"].clone().detach()
-                    pixel_values=row["pixel_values"].clone().detach()
-                    attention_mask=row["attention_mask"].clone().detach()
-                    image_sizes=row["image_sizes"].clone().detach()
+                    if isinstance(row["input_ids"], list):
+                        input_ids = torch.tensor(row["input_ids"]).clone().detach()
+                    else:
+                        input_ids = row["input_ids"].clone().detach()
+                    if isinstance(row["pixel_values"], list):
+                        pixel_values = torch.tensor(row["pixel_values"]).clone().detach()
+                    else:
+                        pixel_values=row["pixel_values"].clone().detach()
+                    if isinstance(row["attention_mask"], list):
+                        attention_mask = torch.tensor(row["attention_mask"]).clone().detach()
+                    else:
+                        attention_mask=row["attention_mask"].clone().detach()
+                    if isinstance(row["image_sizes"], list):
+                        image_sizes = torch.tensor(row["image_sizes"]).clone().detach()
+                    else:
+                        image_sizes=row["image_sizes"].clone().detach()
+
+                    
+                    
+                    
                     yield input_ids,pixel_values,attention_mask,image_sizes
                 else:
                     yield torch.tensor(
@@ -386,10 +403,12 @@ class ActivationsStore:
     @torch.no_grad()
     def estimate_norm_scaling_factor(self, n_batches_for_norm_estimate: int = int(1e3)):
 
+        
         norms_per_batch = []
         for _ in tqdm(
             range(n_batches_for_norm_estimate), desc="Estimating norm scaling factor"
-        ):
+        ):  
+            # import pdb; pdb.set_trace()
             acts = self.next_batch()
             norms_per_batch.append(acts.norm(dim=-1).mean().item())
         mean_norm = np.mean(norms_per_batch)
@@ -405,6 +424,7 @@ class ActivationsStore:
         The default buffer_size of 1 means that only the shard will be shuffled; larger buffer sizes will
         additionally shuffle individual elements within the shard.
         """
+        print("Shuffling input dataset...")
         if type(self.dataset) == IterableDataset:
             self.dataset = self.dataset.shuffle(seed=seed, buffer_size=buffer_size)
         else:
@@ -454,7 +474,7 @@ class ActivationsStore:
                 else:
                     sequences.append(next(self.iterable_sequences))
         # import pdb; pdb.set_trace()           
-        if len(sequences[0])>=4:
+        if type(sequences[0])==tuple :
             input_ids_list = []
             pixel_values_list = []
             attention_mask_list = []
@@ -501,9 +521,9 @@ class ActivationsStore:
         else:
             #llava
             autocast_if_enabled = contextlib.nullcontext()
-
+        
         with autocast_if_enabled:
-            if type(batch_tokens)==dict:
+            if type(batch_tokens)==dict and "pixel_values" in batch_tokens.keys():
                 layerwise_activations = self.model.run_with_cache(
                 batch_tokens,
                 names_filter=[self.hook_name],
@@ -512,17 +532,20 @@ class ActivationsStore:
                 vision=True,
                 model_inputs=batch_tokens,
                 **self.model_kwargs,
-            )[1]
+                )[1]
             else:
                 layerwise_activations = self.model.run_with_cache(
                     batch_tokens,
                     names_filter=[self.hook_name],
                     stop_at_layer=self.hook_layer + 1,
                     prepend_bos=False,
+                    model_inputs=batch_tokens,
+                    vision=True,
                     **self.model_kwargs,
                 )[1]
+        # torch.cuda.empty_cache()
         # import pdb;pdb.set_trace()
-        if isinstance(batch_tokens, dict):
+        if isinstance(batch_tokens, dict) and "pixel_values" in batch_tokens.keys():
             # 处理图片输入
             n_context=self.context_size
             n_batches = len(batch_tokens['pixel_values'])
@@ -542,6 +565,22 @@ class ActivationsStore:
             # 初始化 stacked_activations，形状与激活值匹配
             stacked_activations = torch.zeros((n_batches, n_context, 1, self.d_in))
             
+            if self.hook_head_index is not None:
+                stacked_activations[:, :, 0] = activation[
+                    :, :, self.hook_head_index
+                    ]
+            elif (
+                activation.ndim > 3
+            ):  # if we have a head dimension
+                try:
+                    stacked_activations[:, :, 0] = activation.view(n_batches, n_context, -1)
+                except RuntimeError as e:
+                    print(f"Error during view operation: {e}")
+                    print("Attempting to use reshape instead...")
+                    stacked_activations[:, :, 0] = activation.reshape(n_batches, n_context, -1)
+            else:
+                stacked_activations[:, :, 0] = activation
+            
         else:
             # 原有的文本输入处理方式
             n_batches, n_context = batch_tokens.shape
@@ -549,21 +588,26 @@ class ActivationsStore:
             # 处理激活值
             # 原有代码
 
-        if self.hook_head_index is not None:
-            stacked_activations[:, :, 0] = activation[
-                :, :, self.hook_head_index
-            ]
-        elif (
-            activation.ndim > 3
-        ):  # if we have a head dimension
-            try:
-                stacked_activations[:, :, 0] = activation.view(n_batches, n_context, -1)
-            except RuntimeError as e:
-                print(f"Error during view operation: {e}")
-                print("Attempting to use reshape instead...")
-                stacked_activations[:, :, 0] = activation.reshape(n_batches, n_context, -1)
-        else:
-            stacked_activations[:, :, 0] = activation
+            if self.hook_head_index is not None:
+                stacked_activations[:, :, 0] = layerwise_activations[self.hook_name][
+                    :, :, self.hook_head_index
+                ]
+            elif (
+                layerwise_activations[self.hook_name].ndim > 3
+            ):  # if we have a head dimension
+                try:
+                    stacked_activations[:, :, 0] = layerwise_activations[
+                        self.hook_name
+                    ].view(n_batches, n_context, -1)
+                except RuntimeError as e:
+                    print(f"Error during view operation: {e}")
+                    print("Attempting to use reshape instead...")
+                    stacked_activations[:, :, 0] = layerwise_activations[
+                        self.hook_name
+                    ].reshape(n_batches, n_context, -1)
+
+            else:
+                stacked_activations[:, :, 0] = layerwise_activations[self.hook_name]
 
         return stacked_activations
 
@@ -646,7 +690,7 @@ class ActivationsStore:
             dtype=self.dtype,  # type: ignore
             device=self.device,
         )
-
+        # import pdb;pdb.set_trace()
         for refill_batch_idx_start in refill_iterator:
             # move batch toks to gpu for model
             refill_batch_tokens = self.get_batch_tokens(
@@ -655,10 +699,15 @@ class ActivationsStore:
             if type(refill_batch_tokens)!=dict:
                 refill_batch_tokens=refill_batch_tokens.to(self.model.cfg.device) 
             else:
-                refill_batch_tokens["input_ids"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["input_ids"]]
-                refill_batch_tokens["pixel_values"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["pixel_values"]]
-                refill_batch_tokens["attention_mask"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["attention_mask"]]
-                refill_batch_tokens["image_sizes"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["image_sizes"]]
+                for key in ["input_ids", "pixel_values", "attention_mask", "image_sizes"]:
+                    refill_batch_tokens[key] = [
+                        x.to(self.model.cfg.device) if torch.is_tensor(x) else torch.tensor(x, device=self.model.cfg.device)
+                        for x in refill_batch_tokens[key]
+                    ]
+                # refill_batch_tokens["input_ids"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["input_ids"]]
+                # refill_batch_tokens["pixel_values"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["pixel_values"]]
+                # refill_batch_tokens["attention_mask"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["attention_mask"]]
+                # refill_batch_tokens["image_sizes"] = [x.to(self.model.cfg.device) for x in refill_batch_tokens["image_sizes"]]
             refill_activations = self.get_activations(refill_batch_tokens)
             # gpu_id = get_available_gpu()
             # if gpu_id is not None:
@@ -670,6 +719,9 @@ class ActivationsStore:
                 # print("All GPUs are busy, using CPU")
             # move acts back to cpu
             refill_activations.to(self.device)
+            os.environ['CUDA_VISIBLE_DEVICES'] = '4,5,6'
+            torch.cuda.empty_cache()
+            os.environ['CUDA_VISIBLE_DEVICES'] = '4,5,6,7'
             new_buffer[
                 refill_batch_idx_start : refill_batch_idx_start + batch_size, ...
             ] = refill_activations

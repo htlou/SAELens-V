@@ -204,6 +204,7 @@ class LanguageModelSAERunnerConfig:
 
     dead_feature_threshold: float = 1e-8
 
+    
     # Evals
     n_eval_batches: int = 10
     eval_batch_size_prompts: int | None = None  # useful if evals cause OOM
@@ -230,6 +231,8 @@ class LanguageModelSAERunnerConfig:
     )
     sae_lens_version: str = field(default_factory=lambda: __version__)
     sae_lens_training_version: str = field(default_factory=lambda: __version__)
+    
+    vision: bool = False
 
     def __post_init__(self):
 
@@ -580,7 +583,7 @@ class PretokenizeRunnerConfig:
     num_proc: int = 4
     context_size: int = 128
     column_name: str = "text"
-    image_column_name: Optional[str]="images"
+    image_column_name:str| None="images"
     shuffle: bool = True
     seed: int | None = None
     streaming: bool = False

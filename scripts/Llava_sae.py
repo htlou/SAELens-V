@@ -1,14 +1,16 @@
 import torch
 import os
-# 设置 https 代理
-os.environ['https_proxy'] = 'http://127.0.0.1:7890'
+# # 设置 https 代理
+# os.environ['https_proxy'] = 'http://127.0.0.1:7890'
 
-# 设置 http 代理（如果需要）
-os.environ['http_proxy'] = 'http://127.0.0.1:7890'
+os.environ['CUDA_VISIBLE_DEVICES'] = '4,5,6,7'
+
+# # 设置 http 代理（如果需要）
+# os.environ['http_proxy'] = 'http://127.0.0.1:7890'
 import sys
-sys.path.append("/data/changye/SAELens-V")
+sys.path.append("/home/saev/changye/SAELens-V")
 from sae_lens import LanguageModelSAERunnerConfig, SAETrainingRunner
-total_training_steps = 45000 # probably we should do more
+total_training_steps = 30000 # probably we should do more
 batch_size = 4096
 total_training_tokens = total_training_steps * batch_size
 
@@ -16,16 +18,17 @@ lr_warm_up_steps = 0
 lr_decay_steps = total_training_steps // 5  # 20% of training
 l1_warm_up_steps = total_training_steps // 20  # 5% of training
 
-device = "cuda:7"
+import pdb;pdb.set_trace()
+device = "cuda:3"
 cfg = LanguageModelSAERunnerConfig(
     # Data Generating Function (Model + Training Distibuion)
-    model_class_name="HookedLlava",
+    model_class_name="HookedLlava",  # our model (more options here: https://neelnanda-io.github.io/TransformerLens/generated/model_properties_table.html)
     model_name="llava-hf/llava-v1.6-mistral-7b-hf",  # our model (more options here: https://neelnanda-io.github.io/TransformerLens/generated/model_properties_table.html)
-    local_model_path="/data/models/llava-v1.6-mistral-7b-hf",
-    hook_name="blocks.8.hook_resid_post",  # A valid hook point (see more details here: https://neelnanda-io.github.io/TransformerLens/generated/demos/Main_Demo.html#Hook-Points)
-    hook_layer=8,  # Only one layer in the model.
+    local_model_path="/home/saev/changye/model/llava",
+    hook_name="blocks.16.hook_resid_post",  # A valid hook point (see more details here: https://neelnanda-io.github.io/TransformerLens/generated/demos/Main_Demo.html#Hook-Points)
+    hook_layer=16,  # Only one layer in the model.
     d_in=4096,  # the width of the mlp output.
-    dataset_path="/data/models/obelic10k-tokenized-llava",  # this is a tokenized language dataset on Huggingface for the Tiny Stories corpus.
+    dataset_path="/home/saev/changye/data/obelics100k-tokenized-llava4096_4image",  # this is a tokenized language dataset on Huggingface for the Tiny Stories corpus.
     is_dataset_tokenized=True,
     streaming=True,  # we could pre-download the token dataset if it was small.
     # SAE Parameters
@@ -51,7 +54,7 @@ cfg = LanguageModelSAERunnerConfig(
     train_batch_size_tokens=batch_size,
     context_size=4096,  # will control the lenght of the prompts we feed to the model. Larger is better but slower. so for the tutorial we'll use a short one.
     # Activation Store Parameters
-    n_batches_in_buffer=2,  # controls how many activations we store / shuffle.
+    n_batches_in_buffer=32,  # controls how many activations we store / shuffle.
     training_tokens=total_training_tokens,  # 100 million tokens is quite a few, but we want to see good stats. Get a coffee, come back.
     store_batch_size_prompts=1,#batch_size in forward for it2t is only 1 now
     # Resampling protocol
@@ -60,17 +63,18 @@ cfg = LanguageModelSAERunnerConfig(
     dead_feature_window=1000,  # would effect resampling or ghost grads if we were using it.
     dead_feature_threshold=1e-4,  # would effect resampling or ghost grads if we were using it.
     # WANDB
-    log_to_wandb=False,  # always use wandb unless you are just testing code.
-    wandb_project="interp",
+    log_to_wandb=True,  # always use wandb unless you are just testing code.
+    wandb_project="interp-V",
     wandb_log_frequency=30,
     eval_every_n_wandb_logs=20,
     # Misc
     device=device,
     seed=42,
     n_checkpoints=20,
-    checkpoint_path="checkpoints",
+    checkpoint_path="checkpoints-V",
     dtype="float32",
-    model_from_pretrained_kwargs={"n_devices": 7},
+    model_from_pretrained_kwargs={"n_devices": 3},
+    # from_pretrained_path="/home/saev/changye/checkpoints-V/dt5qiyc8/36868096"
 )
 # look at the next cell to see some instruction for what to do while this is running.
 sparse_autoencoder = SAETrainingRunner(cfg).run()

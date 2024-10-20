@@ -41,14 +41,14 @@ def upload_files_in_directory(directory_path, repo_name, username, token, ignore
 def main():
 
     # Hugging Face 用户名和 Token
-    username = "htlou"         # 请替换为您的用户名
-    token = ""          # 请替换为您的 Hugging Face 访问令牌
+    username = "Antoinegg1"         # 请替换为您的用户名
+    token = "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"          # 请替换为您的 Hugging Face 访问令牌
 
     # 指定目标仓库名称和目录
     name_groups = [
         {
-            "directory_path": "/data/hantao/interp_parts",
-            "repo_name": "1006_interp_full",
+            "directory_path": "/home/saev/changye/data/obelics100k-tokenized-llava4096_w",
+            "repo_name": "llavasae_obliec100k_tokenized_7image",
             "ignore_dirs": []
         }
     ]

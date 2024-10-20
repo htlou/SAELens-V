@@ -162,18 +162,31 @@ class SAETrainer:
         pbar = tqdm(total=self.cfg.total_training_tokens, desc="Training SAE")
 
         self._estimate_norm_scaling_factor_if_needed()
+        print(self.activation_store.estimated_norm_scaling_factor)
         # import pdb;pdb.set_trace()
         # Train loop
         while self.n_training_tokens < self.cfg.total_training_tokens:
             # Do a training step.
+            # if self.n_training_tokens< 36868096:
+            #     self.n_training_tokens += self.cfg.train_batch_size_tokens
+            #     if self.n_training_steps % 100 == 0:
+            #         pbar.set_description(
+            #             f"{self.n_training_steps}| MSE Loss {0:.3f} | L1 {0:.3f}"
+            #         )
+            #         pbar.update(100 * self.cfg.train_batch_size_tokens)
+            #         self.n_training_steps += 1
+            #     continue
             layer_acts = self.activation_store.next_batch()[:, 0, :].to(self.sae.device)
             self.n_training_tokens += self.cfg.train_batch_size_tokens
 
             step_output = self._train_step(sae=self.sae, sae_in=layer_acts)
 
             if self.cfg.log_to_wandb:
-                self._log_train_step(step_output)
-                self._run_and_log_evals()
+                try: 
+                    self._log_train_step(step_output)
+                    self._run_and_log_evals()
+                except Exception as e:
+                    print(f"Error logging to wandb: {e}")
 
             self._checkpoint_if_needed()
             self.n_training_steps += 1
@@ -205,7 +218,8 @@ class SAETrainer:
                 self.activation_store.estimate_norm_scaling_factor()
             )
         else:
-            self.activation_store.estimated_norm_scaling_factor = 1.0
+            print("use pre-estimated norm scaling factor")
+            self.activation_store.estimated_norm_scaling_factor = 13.00857081933552
 
     def _train_step(
         self,
