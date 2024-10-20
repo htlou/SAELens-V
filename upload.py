@@ -42,7 +42,7 @@ def main():
 
     # Hugging Face 用户名和 Token
     username = "Antoinegg1"         # 请替换为您的用户名
-    token = "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"          # 请替换为您的 Hugging Face 访问令牌
+    token = ""          # 请替换为您的 Hugging Face 访问令牌
 
     # 指定目标仓库名称和目录
     name_groups = [

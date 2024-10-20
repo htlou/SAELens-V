@@ -719,20 +719,20 @@ class ActivationsStore:
                 # print("All GPUs are busy, using CPU")
             # move acts back to cpu
             refill_activations.to(self.device)
-            os.environ['CUDA_VISIBLE_DEVICES'] = '4,5,6'
-            torch.cuda.empty_cache()
-            os.environ['CUDA_VISIBLE_DEVICES'] = '4,5,6,7'
+            
             new_buffer[
                 refill_batch_idx_start : refill_batch_idx_start + batch_size, ...
             ] = refill_activations
-
+            os.environ['CUDA_VISIBLE_DEVICES'] = '4,5,6'
+            torch.cuda.empty_cache()
+            os.environ['CUDA_VISIBLE_DEVICES'] = '4,5,6,7'
             # pbar.update(1)
 
         new_buffer = new_buffer.reshape(-1, num_layers, d_in)
         new_buffer = new_buffer[torch.randperm(new_buffer.shape[0])]
 
         # every buffer should be normalized:
-        if self.normalize_activations == "expected_average_only_in":
+        if self.normalize_activations == "expected_average_only_in" or "none":
             new_buffer = self.apply_norm_scaling_factor(new_buffer)
 
         return new_buffer
