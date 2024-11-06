@@ -42,13 +42,13 @@ def main():
 
     # Hugging Face 用户名和 Token
     username = "Antoinegg1"         # 请替换为您的用户名
-    token = ""          # 请替换为您的 Hugging Face 访问令牌
+    token = "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"          # 请替换为您的 Hugging Face 访问令牌
 
     # 指定目标仓库名称和目录
     name_groups = [
         {
             "directory_path": "/home/saev/changye/data/obelics100k-tokenized-llava4096_w",
-            "repo_name": "llavasae_obliec100k_tokenized_7image",
+            "repo_name": "lllavasae_obelics100k-tokenized-4096_all",
             "ignore_dirs": []
         }
     ]

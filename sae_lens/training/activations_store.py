@@ -409,6 +409,9 @@ class ActivationsStore:
             range(n_batches_for_norm_estimate), desc="Estimating norm scaling factor"
         ):  
             # import pdb; pdb.set_trace()
+            
+            # import sys
+            # sys.stdout.flush()
             acts = self.next_batch()
             norms_per_batch.append(acts.norm(dim=-1).mean().item())
         mean_norm = np.mean(norms_per_batch)
@@ -540,7 +543,7 @@ class ActivationsStore:
                     stop_at_layer=self.hook_layer + 1,
                     prepend_bos=False,
                     model_inputs=batch_tokens,
-                    vision=True,
+                    vision=False,
                     **self.model_kwargs,
                 )[1]
         # torch.cuda.empty_cache()
@@ -723,9 +726,9 @@ class ActivationsStore:
             new_buffer[
                 refill_batch_idx_start : refill_batch_idx_start + batch_size, ...
             ] = refill_activations
-            os.environ['CUDA_VISIBLE_DEVICES'] = '4,5,6'
+            # os.environ['CUDA_VISIBLE_DEVICES'] = '4,5,6'
             torch.cuda.empty_cache()
-            os.environ['CUDA_VISIBLE_DEVICES'] = '4,5,6,7'
+            # os.environ['CUDA_VISIBLE_DEVICES'] = '4,5,6,7'
             # pbar.update(1)
 
         new_buffer = new_buffer.reshape(-1, num_layers, d_in)

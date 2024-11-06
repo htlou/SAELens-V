@@ -13,7 +13,7 @@ try:
 except Exception as e:
     HookedLlava = None
 from transformer_lens.hook_points import HookedRootModule
-from transformers import AutoModelForSeq2SeqLM
+from transformers import AutoModelForSeq2SeqLM,AutoModelForCausalLM
 
 def load_model(
     model_class_name: str,
@@ -37,9 +37,11 @@ def load_model(
         if model_class_name == "HookedChameleon":
             from transformers import ChameleonForConditionalGeneration
             hf_model = ChameleonForConditionalGeneration.from_pretrained(local_model_path)
-        elif model_class_name =="HookedLlava":
+        elif model_class_name =="HookedLlava" and "llava" in model_name:
             from transformers import LlavaForConditionalGeneration
             hf_model=LlavaForConditionalGeneration.from_pretrained(local_model_path)
+        elif model_class_name =="HookedLlava" and "mistralai/Mistral-7B-Instruct-v0.2" in model_name:
+            hf_model = AutoModelForCausalLM.from_pretrained(local_model_path)
         else:
             hf_model = AutoModelForSeq2SeqLM.from_pretrained(local_model_path)
     else:
@@ -76,7 +78,7 @@ def load_model(
                 model_name=model_name, hf_model=hf_model, 
                 device=device, **model_from_pretrained_kwargs
             )
-    elif model_class_name == "HookedLlava":
+    elif model_class_name == "HookedLlava" and "llava" in model_name:
         if HookedLlava is None:
             raise ValueError("HookedLlava is not installed")
         if hf_model is None:
@@ -95,5 +97,18 @@ def load_model(
             torch.cuda.empty_cache()
             print("clear hf model")
             return model
+    elif model_class_name == "HookedLlava" and "mistralai/Mistral-7B-Instruct-v0.2" in model_name:
+        if HookedLlava is None:
+            raise ValueError("HookedLlava is not installed")
+        if hf_model is None:
+            Warning("no hf_model for hookllava")
+            return HookedLlava.from_pretrained(
+                model_name=model_name, device=device, **model_from_pretrained_kwargs
+            )
+        else:
+            return HookedLlava.from_pretrained(
+                model_name=model_name, hf_model=hf_model, fold_ln=False,
+                center_writing_weights=False,center_unembed=False,
+                device=device, **model_from_pretrained_kwargs)
     else:  # pragma: no cover
         raise ValueError(f"Unknown model class: {model_class_name}")

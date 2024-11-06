@@ -3,7 +3,7 @@ import os
 # # 设置 https 代理
 # os.environ['https_proxy'] = 'http://127.0.0.1:7890'
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '4,5,6,7'
+os.environ['CUDA_VISIBLE_DEVICES'] = '5,6,7'
 
 # # 设置 http 代理（如果需要）
 # os.environ['http_proxy'] = 'http://127.0.0.1:7890'
@@ -19,16 +19,16 @@ lr_decay_steps = total_training_steps // 5  # 20% of training
 l1_warm_up_steps = total_training_steps // 20  # 5% of training
 
 import pdb;pdb.set_trace()
-device = "cuda:3"
+device = "cuda:2"
 cfg = LanguageModelSAERunnerConfig(
     # Data Generating Function (Model + Training Distibuion)
     model_class_name="HookedLlava",  # our model (more options here: https://neelnanda-io.github.io/TransformerLens/generated/model_properties_table.html)
-    model_name="llava-hf/llava-v1.6-mistral-7b-hf",  # our model (more options here: https://neelnanda-io.github.io/TransformerLens/generated/model_properties_table.html)
-    local_model_path="/home/saev/changye/model/llava",
+    model_name="mistralai/Mistral-7B-Instruct-v0.2",  # our model (more options here: https://neelnanda-io.github.io/TransformerLens/generated/model_properties_table.html)
+    local_model_path="/home/saev/changye/model/Mistral-7B-Instruct-v0.2",
     hook_name="blocks.16.hook_resid_post",  # A valid hook point (see more details here: https://neelnanda-io.github.io/TransformerLens/generated/demos/Main_Demo.html#Hook-Points)
     hook_layer=16,  # Only one layer in the model.
     d_in=4096,  # the width of the mlp output.
-    dataset_path="/home/saev/changye/data/obelics100k-tokenized-llava4096_4image",  # this is a tokenized language dataset on Huggingface for the Tiny Stories corpus.
+    dataset_path="/home/saev/changye/data/pile100k-tokenized-mistralv0_2_4096",  # this is a tokenized language dataset on Huggingface for the Tiny Stories corpus.
     is_dataset_tokenized=True,
     streaming=True,  # we could pre-download the token dataset if it was small.
     # SAE Parameters
@@ -56,7 +56,7 @@ cfg = LanguageModelSAERunnerConfig(
     # Activation Store Parameters
     n_batches_in_buffer=32,  # controls how many activations we store / shuffle.
     training_tokens=total_training_tokens,  # 100 million tokens is quite a few, but we want to see good stats. Get a coffee, come back.
-    store_batch_size_prompts=1,#batch_size in forward for it2t is only 1 now
+    store_batch_size_prompts=4,#batch_size in forward for it2t is only 1 now
     # Resampling protocol
     use_ghost_grads=False,  # we don't use ghost grads anymore.
     feature_sampling_window=1000,  # this controls our reporting of feature sparsity stats
@@ -64,16 +64,16 @@ cfg = LanguageModelSAERunnerConfig(
     dead_feature_threshold=1e-4,  # would effect resampling or ghost grads if we were using it.
     # WANDB
     log_to_wandb=True,  # always use wandb unless you are just testing code.
-    wandb_project="interp-V",
+    wandb_project="interp-M",
     wandb_log_frequency=30,
     eval_every_n_wandb_logs=20,
     # Misc
     device=device,
     seed=42,
     n_checkpoints=20,
-    checkpoint_path="checkpoints-V",
+    checkpoint_path="checkpoints-M",
     dtype="float32",
-    model_from_pretrained_kwargs={"n_devices": 3},
+    model_from_pretrained_kwargs={"n_devices": 2},
     # from_pretrained_path="/home/saev/changye/checkpoints-V/dt5qiyc8/36868096"
 )
 # look at the next cell to see some instruction for what to do while this is running.

@@ -3,9 +3,9 @@ sys.path.append("/home/saev/changye/SAELens-V")
 from sae_lens import PretokenizeRunner, PretokenizeRunnerConfig
 # import pdb;pdb.set_trace()
 cfg = PretokenizeRunnerConfig(
-    tokenizer_name="/home/saev/changye/model/llava",
+    tokenizer_name="llava-hf/llava-v1.6-mistral-7b-hf",
     dataset_path="/home/saev/changye/data/", # this is just a tiny test dataset
-    data_files={"train": "/home/saev/changye/data/obelics_100k_washed_te.json"},
+    data_files={"train": "/home/saev/changye/data/obelics_3k_washed.json"},
     shuffle=True,
     num_proc=4, # increase this number depending on how many CPUs you have
 
@@ -20,7 +20,7 @@ cfg = PretokenizeRunnerConfig(
     # hf_repo_id="your-username/c4-10k-tokenized-gpt2"
 
     # uncomment to save the dataset locally
-    save_path="/home/saev/changye/data/obelics100k-tokenized-llava4096_4image"
+    save_path="/home/saev/changye/data/obelics3k-tokenized-llava4096"
 )
 
 dataset = PretokenizeRunner(cfg).run()
