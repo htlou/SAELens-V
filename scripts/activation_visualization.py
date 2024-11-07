@@ -117,6 +117,56 @@ def image_recover(inputs, processor):
     img_recover = to_pil_image(img_recover)
     return img_recover
 
+# Further processing can be added here
+def map_patches_to_image(patch_features):
+    """
+    Maps activation data from patches to the corresponding positions in the image.
+        
+    Args:
+        patch_features (torch.Tensor): Activation data of shape (576, 2, 65536).
+            
+    Returns:
+        Image: A PIL Image representing the activation map.
+    """
+    patch_features=patch_features.squeeze(0)
+    # Step 1: Count non-zero elements in the last dimension (65536) for each activation
+    counts = (patch_features != 0).sum(dim=2)  # Shape: (576, 2)
+        
+    # Step 2: Sum counts over the two activations for each patch
+    total_counts = counts.sum(dim=1)  # Shape: (576,)
+    # total_counts=counts[:,0]
+    # Step 3: Reshape total_counts into a 24x24 grid
+    counts_2d = total_counts.view(24, 24)
+        
+    # Step 4: Upsample the 24x24 grid to a 336x336 image by repeating each element into a 14x14 block
+    counts_large = counts_2d.repeat_interleave(14, dim=0).repeat_interleave(14, dim=1)
+        
+    # Step 5: Normalize counts to [0, 255] for image representation
+    counts_large = counts_large.float()
+    counts_normalized = counts_large / counts_large.max()
+    colormap = plt.get_cmap('bwr')  # 蓝-白-红渐变
+    counts_colored = colormap(counts_normalized.cpu().numpy())  
+    # Step 6: Convert to NumPy array and ensure data type is uint8
+    counts_colored_uint8 = (counts_colored[:, :, :3] * 255).astype(np.uint8)
+        
+    # Step 7: Create a grayscale image from the array
+    activation_map = Image.fromarray(counts_colored_uint8)
+        
+    return activation_map
+
+def overlay_activation_on_image(image, activation_map):
+   
+    original_image = image.convert('RGBA')
+    activation_map = activation_map.resize((336, 336)).convert('RGBA')
+
+    # 调整激活图的透明度
+    alpha = 128  # 0.5透明度，取值范围0-255
+    activation_map.putalpha(alpha)
+
+    # 将激活图覆盖在原图上
+    combined = Image.alpha_composite(original_image, activation_map)
+
+    return combined
 
 def run_model(inputs, hook_language_model, sae, sae_device: str):
     with torch.no_grad():
@@ -148,6 +198,30 @@ def patch_mapping(image_indice, feature_acts):
     )
     patch_features = feature_acts[:, patch_indices]
     return patch_features
+
+def generate_with_saev(inputs, hook_language_model,processor,save_path,image, sae, sae_device: str):
+    with torch.no_grad():
+        tokens,image_indice,tmp_cache_list=hook_language_model.generate(
+            inputs,
+            sae_hook_name=sae.cfg.hook_name,
+        )
+        output=processor.decode(tokens[0], skip_special_tokens=True)
+        print(output)
+        for i,tmp_cache in enumerate(tmp_cache_list):
+            tmp_cache=tmp_cache.to(sae_device)
+            feature_acts = sae.encode(tmp_cache)
+            image_indice = image_indice.to("cpu")
+            feature_acts = feature_acts.to("cpu")
+            patch_features = patch_mapping(image_indice, feature_acts)
+            activation_map = map_patches_to_image(patch_features)
+            final_image=overlay_activation_on_image(image, activation_map)
+            final_image.save(os.path.join(save_path,f"{i}.png"))
+        # tmp_cache = cache[sae.cfg.hook_name]
+        # tmp_cache = tmp_cache.to(sae_device)
+        # feature_acts = sae.encode(tmp_cache)
+        # sae_out = sae.decode(feature_acts)
+        # del cache
+    return image_indice, feature_acts
 
 
 def main():
@@ -184,57 +258,10 @@ def main():
 
     patch_features = patch_mapping(image_indice, feature_acts)
 
-    # Further processing can be added here
-    def map_patches_to_image(patch_features):
-        """
-        Maps activation data from patches to the corresponding positions in the image.
-        
-        Args:
-            patch_features (torch.Tensor): Activation data of shape (576, 2, 65536).
-            
-        Returns:
-            Image: A PIL Image representing the activation map.
-        """
-        patch_features=patch_features.squeeze(0)
-        # Step 1: Count non-zero elements in the last dimension (65536) for each activation
-        counts = (patch_features != 0).sum(dim=2)  # Shape: (576, 2)
-        
-        # Step 2: Sum counts over the two activations for each patch
-        total_counts = counts.sum(dim=1)  # Shape: (576,)
-        # total_counts=counts[:,0]
-        # Step 3: Reshape total_counts into a 24x24 grid
-        counts_2d = total_counts.view(24, 24)
-        
-        # Step 4: Upsample the 24x24 grid to a 336x336 image by repeating each element into a 14x14 block
-        counts_large = counts_2d.repeat_interleave(14, dim=0).repeat_interleave(14, dim=1)
-        
-        # Step 5: Normalize counts to [0, 255] for image representation
-        counts_large = counts_large.float()
-        counts_normalized = counts_large / counts_large.max()
-        colormap = plt.get_cmap('bwr')  # 蓝-白-红渐变
-        counts_colored = colormap(counts_normalized.cpu().numpy())  
-        # Step 6: Convert to NumPy array and ensure data type is uint8
-        counts_colored_uint8 = (counts_colored[:, :, :3] * 255).astype(np.uint8)
-        
-        # Step 7: Create a grayscale image from the array
-        activation_map = Image.fromarray(counts_colored_uint8)
-        
-        return activation_map
+
 
     activation_map = map_patches_to_image(patch_features)
-    def overlay_activation_on_image(image, activation_map):
-   
-        original_image = image.convert('RGBA')
-        activation_map = activation_map.resize((336, 336)).convert('RGBA')
 
-        # 调整激活图的透明度
-        alpha = 128  # 0.5透明度，取值范围0-255
-        activation_map.putalpha(alpha)
-
-        # 将激活图覆盖在原图上
-        combined = Image.alpha_composite(original_image, activation_map)
-
-        return combined
     final_image=overlay_activation_on_image(image, activation_map)
     final_image.show()
     final_image.save("car.png")
