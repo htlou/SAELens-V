@@ -1,28 +1,20 @@
 import os
-import torch
-from tqdm import tqdm
-import numpy as np
-import plotly.express as px
-from datasets import Dataset, DatasetDict, IterableDataset, load_dataset, load_from_disk
-from transformer_lens import HookedTransformer
-from typing import Any, Generator, Iterator, Literal, cast
-from sae_lens import SAE
-from transformers import (
-    AutoTokenizer,
-    LlavaNextForConditionalGeneration,
-    LlavaNextProcessor,
-    AutoModelForCausalLM,
-)
-import matplotlib.pyplot as plt
-from functools import partial
-from transformers.feature_extraction_utils import BatchFeature
-from transformer_lens.utils import tokenize_and_concatenate
-import transformer_lens.utils as utils
-from transformer_lens.HookedLlava import HookedLlava
-from PIL import Image
-from torchvision.transforms.functional import to_pil_image
 import pdb
-# pdb.set_trace()
+from typing import Any, cast
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
+import numpy as np
+import torch
+from datasets import Dataset, DatasetDict, load_dataset, load_from_disk
+from PIL import Image
+from sae_lens import SAE
+from torchvision.transforms.functional import to_pil_image
+from transformer_lens.HookedLlava import HookedLlava
+from transformers import LlavaNextForConditionalGeneration, LlavaNextProcessor
+
+pdb.set_trace()
+
+
 def load_models(model_name: str, model_path: str, device: str):
     processor = LlavaNextProcessor.from_pretrained(model_path)
     vision_model = LlavaNextForConditionalGeneration.from_pretrained(
@@ -45,7 +37,7 @@ def load_models(model_name: str, model_path: str, device: str):
         multi_modal_projector=multi_modal_projector,
         n_devices=4,
     )
-    # hook_language_model=None
+    # hook_language_model = None
     return (
         processor,
         vision_model,
@@ -75,7 +67,7 @@ def load_dataset_func(dataset_path: str, columns_to_read: list):
             if isinstance(dataset_path, str)
             else dataset_path
         )
-    except Exception as e:
+    except Exception:
         dataset = (
             load_from_disk(
                 dataset_path,
@@ -92,7 +84,7 @@ def load_dataset_func(dataset_path: str, columns_to_read: list):
     return dataset
 
 
-def prepare_input(processor, image_path: str, example_prompt: str):
+def prepare_input(processor,device, image_path: str, example_prompt: str):
     image = Image.open(image_path)
     image = image.resize((336, 336))
     example_prompt = example_prompt + " <image>"
@@ -107,7 +99,14 @@ def prepare_input(processor, image_path: str, example_prompt: str):
     prompt = processor.apply_chat_template(conversation, add_generation_prompt=False)
     # print("Generated Prompt:\n", prompt)
     inputs = processor(images=image, text=prompt, return_tensors="pt")
-    return inputs,image
+    inputs =inputs.to(device)
+    inputs={
+        "input_ids": inputs["input_ids"],
+        "attention_mask": inputs["attention_mask"],
+        "pixel_values": inputs["pixel_values"],
+        "image_sizes": inputs["image_sizes"],
+    }
+    return inputs, image
 
 
 def image_recover(inputs, processor):
@@ -117,56 +116,6 @@ def image_recover(inputs, processor):
     img_recover = to_pil_image(img_recover)
     return img_recover
 
-# Further processing can be added here
-def map_patches_to_image(patch_features):
-    """
-    Maps activation data from patches to the corresponding positions in the image.
-        
-    Args:
-        patch_features (torch.Tensor): Activation data of shape (576, 2, 65536).
-            
-    Returns:
-        Image: A PIL Image representing the activation map.
-    """
-    patch_features=patch_features.squeeze(0)
-    # Step 1: Count non-zero elements in the last dimension (65536) for each activation
-    counts = (patch_features != 0).sum(dim=2)  # Shape: (576, 2)
-        
-    # Step 2: Sum counts over the two activations for each patch
-    total_counts = counts.sum(dim=1)  # Shape: (576,)
-    # total_counts=counts[:,0]
-    # Step 3: Reshape total_counts into a 24x24 grid
-    counts_2d = total_counts.view(24, 24)
-        
-    # Step 4: Upsample the 24x24 grid to a 336x336 image by repeating each element into a 14x14 block
-    counts_large = counts_2d.repeat_interleave(14, dim=0).repeat_interleave(14, dim=1)
-        
-    # Step 5: Normalize counts to [0, 255] for image representation
-    counts_large = counts_large.float()
-    counts_normalized = counts_large / counts_large.max()
-    colormap = plt.get_cmap('bwr')  # 蓝-白-红渐变
-    counts_colored = colormap(counts_normalized.cpu().numpy())  
-    # Step 6: Convert to NumPy array and ensure data type is uint8
-    counts_colored_uint8 = (counts_colored[:, :, :3] * 255).astype(np.uint8)
-        
-    # Step 7: Create a grayscale image from the array
-    activation_map = Image.fromarray(counts_colored_uint8)
-        
-    return activation_map
-
-def overlay_activation_on_image(image, activation_map):
-   
-    original_image = image.convert('RGBA')
-    activation_map = activation_map.resize((336, 336)).convert('RGBA')
-
-    # 调整激活图的透明度
-    alpha = 128  # 0.5透明度，取值范围0-255
-    activation_map.putalpha(alpha)
-
-    # 将激活图覆盖在原图上
-    combined = Image.alpha_composite(original_image, activation_map)
-
-    return combined
 
 def run_model(inputs, hook_language_model, sae, sae_device: str):
     with torch.no_grad():
@@ -197,30 +146,222 @@ def patch_mapping(image_indice, feature_acts):
         (valid_indices[:576], valid_indices[576:]), dim=1
     )
     patch_features = feature_acts[:, patch_indices]
-    return patch_features
+    
+    patch_features = patch_features.squeeze(0)
 
-def generate_with_saev(inputs, hook_language_model,processor,save_path,image, sae, sae_device: str):
+    # Step 1: Compute L1 norm over the last dimension (65536) for each activation
+    activation_l1_norms = patch_features.abs().sum(dim=2)  # Shape: (576, 2)
+
+    # Step 2: Sum the L1 norms over the two activations for each patch
+    total_activation_l1_norms = activation_l1_norms.sum(dim=1)  # Shape: (576,)
+    return total_activation_l1_norms,patch_features
+
+def count_red_blue_elements(activation_colored_uint8, blue_threshold=200, red_threshold=200):
+    """
+    Counts the number of pixels close to blue and red in an RGB image.
+    
+    Args:
+        activation_colored_uint8 (np.ndarray): RGB image array with shape (H, W, 3).
+        blue_threshold (int): Threshold for blue pixel detection.
+        red_threshold (int): Threshold for red pixel detection.
+    
+    Returns:
+        int, int: Count of blue-like and red-like pixels.
+    """
+    blue_mask = (activation_colored_uint8[:, :, 0] < blue_threshold) & \
+                (activation_colored_uint8[:, :, 1] < blue_threshold) & \
+                (activation_colored_uint8[:, :, 2] > blue_threshold)
+    blue_count = blue_mask.sum()
+    
+    red_mask = (activation_colored_uint8[:, :, 0] > red_threshold) & \
+               (activation_colored_uint8[:, :, 1] < red_threshold) & \
+               (activation_colored_uint8[:, :, 2] < red_threshold)
+    red_count = red_mask.sum()
+    
+    return blue_count, red_count
+
+def map_patches_to_image(total_activation_l1_norms,lower_clip=0.01,upper_clip=0.99,cmap='plasma'):
+    """
+    Maps activation data from patches to the corresponding positions in the image.
+
+    Args:
+        patch_features (torch.Tensor): Activation data of shape (576, 2, 65536).
+
+    Returns:
+        Image: A PIL Image representing the activation map.
+    """
+
+    
+    lower_bound = torch.quantile(total_activation_l1_norms, lower_clip)
+    upper_bound = torch.quantile(total_activation_l1_norms, upper_clip)
+    
+    clipped_activation_l1_norms = torch.where(total_activation_l1_norms < lower_bound, 
+                                          torch.tensor(0.0, device=total_activation_l1_norms.device), 
+                                          total_activation_l1_norms)
+    clipped_activation_l1_norms = torch.where(clipped_activation_l1_norms > upper_bound, 
+                                          upper_bound, 
+                                          clipped_activation_l1_norms)
+    # print("After clipping:")
+    # print(f"  Elements equal to 0 (near lower bound): {(clipped_activation_l1_norms == 0).sum().item()}")
+    # print(f"  Elements equal to upper bound: {(clipped_activation_l1_norms == upper_bound).sum().item()}")
+
+    # Step 3: Reshape total_activation_l1_norms into a 24x24 grid
+    activation_l1_norms_2d = clipped_activation_l1_norms.view(24, 24)
+
+    # Step 4: Upsample the 24x24 grid to a 336x336 image by repeating each element into a 14x14 block
+    activation_l1_norms_large = activation_l1_norms_2d.repeat_interleave(14, dim=0).repeat_interleave(14, dim=1)
+
+    # Step 5: Normalize activation_l1_norms to [0, 1] for image representation
+    activation_l1_norms_large = activation_l1_norms_large.float()
+
+    # 计算绝对值的最大值
+    max_abs_val = activation_l1_norms_large.abs().max()
+
+    # 避免除以零的情况
+    if max_abs_val == 0:
+        print("max_abs_val == 0")
+        activation_l1_norms_normalized = torch.zeros_like(activation_l1_norms_large)
+    else:
+        # 归一化到 [-1, 1]
+        activation_l1_norms_normalized = activation_l1_norms_large / max_abs_val
+        if activation_l1_norms_normalized.min()<0:
+            # 平移到 [0, 1]
+            activation_l1_norms_normalized = (activation_l1_norms_normalized + 1) / 2
+    
+    # print("After normalization:")
+    # print(f"  Min value: {activation_l1_norms_normalized.min().item()}")
+    # print(f"  Max value: {activation_l1_norms_normalized.max().item()}")
+    # print(f"  Elements close to -1 (blue): {(activation_l1_norms_normalized < -0.3).sum().item()}")
+    # print(f"  Elements close to 1 (red): {(activation_l1_norms_normalized > 0.3).sum().item()}")
+    
+    # Step 6: Apply a different colormap for a heatmap style
+    colormap = plt.get_cmap(cmap)  # Try 'plasma', 'inferno', or 'magma' for similar effects
+    # if activation_l1_norms_normalized.min()<0:
+    #     # print("Detected negative values, adjusting colormap normalization.")
+    #     activation_colored = colormap((activation_l1_norms_normalized.cpu().numpy() + 1) / 2) 
+    # else:
+    activation_colored = colormap(activation_l1_norms_normalized.cpu().numpy())
+
+    # Step 7: Convert to NumPy array and ensure data type is uint8
+    activation_colored_uint8 = (activation_colored[:, :, :3] * 255).astype(np.uint8)
+    # print(f"  Activation map shape: {activation_colored_uint8.shape}")
+    # blue_count, red_count = count_red_blue_elements(activation_colored_uint8)
+    # print(f"Number of blue-like elements: {blue_count}")
+    # print(f"Number of red-like elements: {red_count}")
+    # Step 8: Create an RGB image from the array
+    activation_map = Image.fromarray(activation_colored_uint8)
+
+    return activation_map
+
+
+def overlay_activation_on_image(image, activation_map):
+    original_image = image.convert('RGBA')
+    activation_map = activation_map.resize((336, 336)).convert('RGBA')
+
+    # Adjust the transparency of the activation map
+    alpha = 128  # 0.5 transparency, value range 0-255
+    activation_map.putalpha(alpha)
+
+    # Overlay the activation map on the original image
+    combined = Image.alpha_composite(original_image, activation_map)
+
+    return combined
+
+
+def filter_diff_by_std(diff):
+    """
+    Filters the diff tensor to retain only the values beyond one standard deviation from the mean.
+
+    Args:
+        diff (torch.Tensor): The difference tensor containing positive and negative shifts.
+
+    Returns:
+        torch.Tensor: A tensor with values within one standard deviation set to 0.
+    """
+    # 计算 diff 的均值和标准差
+    mean_diff = diff.mean()
+    std_diff = diff.std()
+
+    # 定义上下阈值
+    upper_threshold = mean_diff + std_diff
+    lower_threshold = mean_diff - std_diff
+
+    # 过滤掉在一个标准差以内的值
+    filtered_diff = torch.where(
+        (diff > upper_threshold) | (diff < lower_threshold),
+        diff,
+        torch.tensor(0.0, device=diff.device)
+    )
+
+    return filtered_diff
+
+def generate_with_saev(inputs, hook_language_model, processor, save_path, image, sae, sae_device: str):
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
     with torch.no_grad():
-        tokens,image_indice,tmp_cache_list=hook_language_model.generate(
+        tokens, image_indice, tmp_cache_list = hook_language_model.generate(
             inputs,
             sae_hook_name=sae.cfg.hook_name,
+            max_new_tokens=30,
         )
-        output=processor.decode(tokens[0], skip_special_tokens=True)
+        input_length = inputs['input_ids'].shape[1]
+        decoded_tokens = processor.tokenizer.convert_ids_to_tokens(tokens[0])
+        output = processor.decode(tokens[0], skip_special_tokens=True)
+        previous_total_activation_l1_norms = None
+        previous_patch_features=None
+
         print(output)
-        for i,tmp_cache in enumerate(tmp_cache_list):
-            tmp_cache=tmp_cache.to(sae_device)
+        for i, (tmp_cache, token) in enumerate(zip(tmp_cache_list, decoded_tokens[input_length:])):
+            tmp_cache = tmp_cache.to(sae_device)
             feature_acts = sae.encode(tmp_cache)
             image_indice = image_indice.to("cpu")
             feature_acts = feature_acts.to("cpu")
-            patch_features = patch_mapping(image_indice, feature_acts)
-            activation_map = map_patches_to_image(patch_features)
-            final_image=overlay_activation_on_image(image, activation_map)
-            final_image.save(os.path.join(save_path,f"{i}.png"))
+            total_activation_l1_norms,patch_features = patch_mapping(image_indice, feature_acts)
+            if previous_patch_features is not None:
+                patch_features=patch_features[(patch_features!=0).sum(dim=2)>50]
+                previous_patch_features=previous_patch_features[(previous_patch_features!=0).sum(dim=2)>50]
+                patch_features=patch_features.to("cuda")
+                previous_patch_features=previous_patch_features.to("cuda")
+                cos_sim = F.cosine_similarity(patch_features, previous_patch_features, dim=1)
+                mean_cos_sim = cos_sim.mean()
+                print(f"mean_cos_sim:{i}_{token}",mean_cos_sim)
+            # print(total_activation_l1_norms.sum())
+            if previous_total_activation_l1_norms is None: 
+                current_activation_map = map_patches_to_image(total_activation_l1_norms)
+                final_image = overlay_activation_on_image(image, current_activation_map)
+                final_image.save(os.path.join(save_path, f"current_{i}_{token}.png"))
+                    
+            else:
+                # patch_features=patch_features.to("cuda")
+                # previous_patch_features=previous_patch_features.to("cuda")
+                # cos_sim = F.cosine_similarity(patch_features, previous_patch_features, dim=1)
+                # print(f"total_activation_l1_norms:",total_activation_l1_norms.sum())
+                # print(f"previous_total_activation_l1_norms:",previous_total_activation_l1_norms.sum())
+                diff = total_activation_l1_norms - previous_total_activation_l1_norms
+                shift_diff = filter_diff_by_std(diff)  # Shift to non-negative range
+                diff_activation_map = map_patches_to_image(shift_diff, lower_clip=0.01, upper_clip=0.99, cmap='bwr')
+                final_image = overlay_activation_on_image(image, diff_activation_map)
+                final_image.save(os.path.join(save_path, f"diff_{i}_{token}.png"))
+                if i%10==0:
+                    current_activation_map=map_patches_to_image(total_activation_l1_norms)
+                    final_image = overlay_activation_on_image(image, current_activation_map)
+                    final_image.save(os.path.join(save_path, f"current_{i}_{token}.png"))
+
+            previous_total_activation_l1_norms = total_activation_l1_norms
+            previous_patch_features=patch_features
         # tmp_cache = cache[sae.cfg.hook_name]
         # tmp_cache = tmp_cache.to(sae_device)
         # feature_acts = sae.encode(tmp_cache)
         # sae_out = sae.decode(feature_acts)
         # del cache
+        # plt.figure(figsize=(10, 6))
+        # plt.plot(activation_diff, marker='o', linestyle='-', color='b')
+        # plt.xlabel("Generation Step")
+        # plt.ylabel("activation_diff")
+        # plt.title("activation_diff Value over Generation Steps")
+        # plt.grid(True)
+        # plt.savefig(os.path.join(save_path, "activation_diff_plot.png"))
+        # plt.show()
     return image_indice, feature_acts
 
 
@@ -232,39 +373,44 @@ def main():
     sae_path = "/mnt/data/changye/checkpoints/xepk4xea/final_163840000"
     dataset_path = "/mnt/data/changye/data/obelics3k-tokenized-llava4096"
     columns_to_read = ["input_ids", "pixel_values", "attention_mask", "image_sizes"]
-    example_prompt = "The color of car in the image is"
+    example_prompt = "What is shown in this image?"
     # example_answer = "Apple"
-    image_path = "/home/saev/changye/OIP (1).jpg"
-
+    image_path = "/home/saev/changye/R.jpg"
+    save_path = "/home/saev/changye/SAELens-V/activation_visualization"
     torch.cuda.empty_cache()
 
-    processor, vision_model, vision_tower, multi_modal_projector, hook_language_model = load_models(
-        MODEL_NAME, model_path, device
-    )
+    (
+        processor,
+        vision_model,
+        vision_tower,
+        multi_modal_projector,
+        hook_language_model,
+    ) = load_models(MODEL_NAME, model_path, device)
 
     sae = load_sae(sae_path, sae_device)
 
-    dataset = load_dataset_func(dataset_path, columns_to_read)
+    # dataset = load_dataset_func(dataset_path, columns_to_read)
 
-    inputs,image = prepare_input(processor, image_path, example_prompt)
-    inputs = inputs.to(device)
+    inputs, image = prepare_input(processor,device, image_path, example_prompt)
+    _ = generate_with_saev(
+        inputs, hook_language_model, processor, save_path, image, sae, sae_device
+    )
 
     # img_recover = image_recover(inputs, processor)
 
-    image_indice, feature_acts = run_model(inputs, hook_language_model, sae, sae_device)
+    # image_indice, feature_acts = run_model(inputs, hook_language_model, sae, sae_device)
 
-    image_indice = image_indice.to("cpu")
-    feature_acts = feature_acts.to("cpu")
+    # image_indice = image_indice.to("cpu")
+    # feature_acts = feature_acts.to("cpu")
 
-    patch_features = patch_mapping(image_indice, feature_acts)
+    # patch_features = patch_mapping(image_indice, feature_acts)
 
+    # activation_map = map_patches_to_image(patch_features)
 
+    # final_image = overlay_activation_on_image(image, activation_map)
+    # final_image.show()
+    # final_image.save("car.png")
 
-    activation_map = map_patches_to_image(patch_features)
-
-    final_image=overlay_activation_on_image(image, activation_map)
-    final_image.show()
-    final_image.save("car.png")
 
 if __name__ == "__main__":
     main()
