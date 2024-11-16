@@ -23,84 +23,88 @@ def reconstr_hook(activation, hook, sae_out):
 def zero_abl_hook(activation, hook):
     return torch.zeros_like(activation)
 
-def reconstruction_test(hook_language_model, sae, token_dataset, batch_size=100):
+def reconstruction_test(hook_language_model, sae, token_dataset,description,batch_size=8):
     total_orig_loss = 0.0
     total_reconstr_loss = 0.0
     total_zero_loss = 0.0
     num_batches = 0
 
-    total_tokens = len(token_dataset)
+    total_tokens =50
     with torch.no_grad():
-        for start_idx in range(0, total_tokens, batch_size):
-            end_idx = min(start_idx + batch_size, total_tokens)
-            batch_data = token_dataset[start_idx:end_idx]
+        with tqdm.tqdm(total=total_tokens, desc="Reconstruction Test") as pbar:
+            for start_idx in range(0, total_tokens, batch_size):
+                # torch.cuda.empty_cache()
+                end_idx = min(start_idx + batch_size, total_tokens)
+                batch_data = token_dataset[start_idx:end_idx]
 
-            # 获取批量的 tokens
-            batch_tokens = batch_data["tokens"]
+                # 获取批量的 tokens
+                batch_tokens = batch_data["tokens"]
 
-            # 确保 tokens 在模型的设备上
-            device = hook_language_model.cfg.device
-            batch_tokens = batch_tokens.to(device)
+                # 确保 tokens 在模型的设备上
+                device = hook_language_model.cfg.device
+                batch_tokens = batch_tokens.to(device)
 
-            # 获取模型的激活并缓存
-            _, cache = hook_language_model.run_with_cache(
-                batch_tokens,
-                prepend_bos=True,
-                names_filter=lambda name: name == sae.cfg.hook_name
-            )
+                # 获取模型的激活并缓存
+                _, cache = hook_language_model.run_with_cache(
+                    batch_tokens,
+                    prepend_bos=True,
+                    names_filter=lambda name: name == sae.cfg.hook_name
+                )
 
-            # 使用 SAE 进行编码和解码
-            activation = cache[sae.cfg.hook_name]
-            feature_acts = sae.encode(activation)
-            sae_out = sae.decode(feature_acts)
+                # 使用 SAE 进行编码和解码
+                activation = cache[sae.cfg.hook_name]
+                activation =activation.to(sae.device)
+                feature_acts = sae.encode(activation)
+                sae_out = sae.decode(feature_acts)
+                sae_out = sae_out.to(device)
+                # 释放缓存以节省内存
+                del cache
 
-            # 释放缓存以节省内存
-            del cache
+                # 计算原始损失
+                orig_loss = hook_language_model(
+                    batch_tokens, return_type="loss"
+                ).item()
+                total_orig_loss += orig_loss
 
-            # 计算原始损失
-            orig_loss = hook_language_model(
-                batch_tokens, return_type="loss"
-            ).item()
-            total_orig_loss += orig_loss
+                # 计算重建后的损失
+                reconstr_loss = hook_language_model.run_with_hooks(
+                    batch_tokens,
+                    fwd_hooks=[
+                        (
+                            sae.cfg.hook_name,
+                            partial(reconstr_hook, sae_out=sae_out),
+                        )
+                    ],
+                    return_type="loss",
+                ).item()
+                total_reconstr_loss += reconstr_loss
 
-            # 计算重建后的损失
-            reconstr_loss = hook_language_model.run_with_hooks(
-                batch_tokens,
-                fwd_hooks=[
-                    (
-                        sae.cfg.hook_name,
-                        partial(reconstr_hook, sae_out=sae_out),
-                    )
-                ],
-                return_type="loss",
-            ).item()
-            total_reconstr_loss += reconstr_loss
+                # 计算零置换后的损失
+                zero_loss = hook_language_model.run_with_hooks(
+                    batch_tokens,
+                    fwd_hooks=[(sae.cfg.hook_name, zero_abl_hook)],
+                    return_type="loss",
+                ).item()
+                total_zero_loss += zero_loss
 
-            # 计算零置换后的损失
-            zero_loss = hook_language_model.run_with_hooks(
-                batch_tokens,
-                fwd_hooks=[(sae.cfg.hook_name, zero_abl_hook)],
-                return_type="loss",
-            ).item()
-            total_zero_loss += zero_loss
+                num_batches += 1
 
-            num_batches += 1
+                # 清理内存
+                del activation, feature_acts, sae_out
+                torch.cuda.empty_cache()
 
-            # 清理内存
-            del activation, feature_acts, sae_out
-            torch.cuda.empty_cache()
-
-            # 可选：打印每个批次的损失
-            # print(f"Batch {num_batches}: Orig Loss = {orig_loss}, Reconstr Loss = {reconstr_loss}, Zero Loss = {zero_loss}")
+                # 可选：打印每个批次的损失
+                # print(f"Batch {num_batches}: Orig Loss = {orig_loss}, Reconstr Loss = {reconstr_loss}, Zero Loss = {zero_loss}")
+                pbar.update(batch_size)
 
     # 计算平均损失
     avg_orig_loss = total_orig_loss / num_batches
     avg_reconstr_loss = total_reconstr_loss / num_batches
     avg_zero_loss = total_zero_loss / num_batches
 
-    print("平均原始损失:", avg_orig_loss)
-    print("平均重建损失:", avg_reconstr_loss)
-    print("平均零置换损失:", avg_zero_loss)
+    print(f"{description}_平均原始损失:", avg_orig_loss)
+    print(f"{description}_平均重建损失:", avg_reconstr_loss)
+    print(f"{description}_平均零置换损失:", avg_zero_loss)
 
 def load_vision_model(model_path: str, device: str) -> Tuple[LlavaNextForConditionalGeneration, torch.nn.Module, torch.nn.Module]:
     """加载视觉模型和相关组件"""
@@ -156,7 +160,7 @@ def l0_test(sae, hook_language_model, token_dataset,description, batch_size=8):
         # activation store can give us tokens.
         with tqdm.tqdm(total=total_tokens, desc="L0 Test") as pbar:
             for start_idx in range(0, total_tokens, batch_size):
-                torch.cuda.empty_cache()
+                # torch.cuda.empty_cache()
                 end_idx = start_idx + batch_size
                 batch_tokens = token_dataset[start_idx:end_idx]["tokens"]
 
@@ -210,6 +214,10 @@ def load_and_tokenize_dataset(dataset_path: str, split: str, tokenizer, max_leng
 def run_l0_test(sae, hook_model, token_dataset, description,batch_size=8):
     print(f"L0 test {description}")
     l0_test(sae, hook_model, token_dataset,description,batch_size)
+    
+def run_reconstruction_test(hook_language_model, sae, token_dataset,description,batch_size=8):
+    print(f"Reconstruction test {description}")
+    reconstruction_test(hook_language_model, sae, token_dataset,description,batch_size)
 
 def main():
     MODEL_NAME = "llava-hf/llava-v1.6-mistral-7b-hf"
@@ -247,20 +255,20 @@ def main():
         n_devices=4,
     )
 
-    # 加载 SAE 模型
+    # # 加载 SAE 模型
     sae_ori = load_sae_model(
         path="/mnt/data/changye/checkpoints-M/am4f73zh/104452096",
-        device="cuda:2"
+        device="cuda:7"
     )
     sae_V_llava = load_sae_model(
         path="/mnt/data/changye/checkpoints-V/kxpk98cr/final_122880000",
-        device="cuda:7"
+        device="cuda:6"
     )
 
-    # sae_llava = load_sae_model(
-    #     path="/mnt/data/changye/checkpoints/xepk4xea/final_163840000",
-    #     device="cuda:7"
-    # )
+    sae_llava = load_sae_model(
+        path="/mnt/data/changye/checkpoints/xepk4xea/final_163840000",
+        device="cuda:6"
+    )
     
     # 加载并标记化数据集（适用于 LLAVA）
     token_dataset_llava = load_and_tokenize_dataset(
@@ -280,50 +288,27 @@ def main():
         add_bos_token=sae_ori.cfg.prepend_bos
     )
     del vision_model, vision_tower, multi_modal_projector, ori_model
-    # L0 测试
-    # run_l0_test(sae_ori, hook_ori_model, token_dataset_ori, "for original model with sae original",4)
+
     threads = []
-    thread1= threading.Thread(target=run_l0_test, args=(
-        sae_ori, hook_llava_model, token_dataset_llava,"for llava model with sae original",4))
-    thread2= threading.Thread(target=run_l0_test, args=(
-        sae_V_llava, hook_ori_model, token_dataset_ori,"for original model with sae llava V",4))
-    thread3= threading.Thread(target=run_l0_test, args=(
-    sae_V_llava, hook_llava_model, token_dataset_llava,"for llava model with sae llava V",4))
-    threads.append(thread3)
-
-    # thread1 = threading.Thread(target=run_l0_test, args=(
-    #     sae_llava, hook_llava_model, token_dataset_llava, "for llava model with sae llava"))
-    # thread2 = threading.Thread(target=run_l0_test, args=(
-    #     sae_ori, hook_ori_model, token_dataset_ori, "for original model with sae original",5))
-
-    threads.extend([thread1, thread2])
-
-    # 启动第一组线程
-    thread1.start()
-    thread2.start()
-
-    # 等待第一组线程完成
-    thread1.join()
-    thread3.start()
-    thread3.join()
-    
-    
-    thread2.join()
-    # 第二组测试
-    # thread3 = threading.Thread(target=run_l0_test, args=(
-    #     sae_ori, hook_llava_model, token_dataset_llava, "for llava model with sae original"))
-    # thread4 = threading.Thread(target=run_l0_test, args=(
-    #     sae_llava, hook_ori_model, token_dataset_ori, "for original model with sae llava",5))
-    
-    # threads.extend([thread3, thread4])
-
-    # # 启动第二组线程
+    thread1=threading.Thread(target=run_reconstruction_test,args=(hook_llava_model,sae_V_llava,token_dataset_llava,"sae_V_llava",5))
+    thread2=threading.Thread(target=run_reconstruction_test,args=(hook_llava_model,sae_llava,token_dataset_llava,"sae_llava",4))
+    thread3=threading.Thread(target=run_reconstruction_test,args=(hook_ori_model,sae_ori,token_dataset_ori,"sae_ori_ori",5))
+    thread4=threading.Thread(target=run_reconstruction_test,args=(hook_ori_model,sae_llava,token_dataset_ori,"sae_llava_ori",4))
+    thread5=threading.Thread(target=run_reconstruction_test,args=(hook_ori_model,sae_V_llava,token_dataset_ori,"sae_V_llava_ori",5))
+    thread6=threading.Thread(target=run_reconstruction_test,args=(hook_llava_model,sae_ori,token_dataset_llava,"sae_ori_llava",5))
+    threads.extend([thread1,thread2,thread3,thread4,thread5,thread6])
+    # thread1.start()
     # thread3.start()
-    # thread4.start()
-
-    # # 等待第二组线程完成
+    # thread1.join()
     # thread3.join()
-    # thread4.join()
+    thread2.start()
+    thread4.start()
+    thread2.join()
+    thread4.join()
+    thread5.start()
+    thread6.start()
+    thread5.join()
+    thread6.join()
 
 
 if __name__ == "__main__":

@@ -10,12 +10,17 @@ from PIL import Image
 from sae_lens import SAE
 from torchvision.transforms.functional import to_pil_image
 from transformer_lens.HookedLlava import HookedLlava
+from transformer_lens import HookedChameleon
 from transformers import LlavaNextForConditionalGeneration, LlavaNextProcessor
+from transformers import ChameleonForConditionalGeneration, AutoTokenizer, ChameleonProcessor
+import transformer_lens.utils as utils
+from transformer_lens.hook_points import (
+    HookPoint,
+) 
+# pdb.set_trace()
 
-pdb.set_trace()
 
-
-def load_models(model_name: str, model_path: str, device: str):
+def load_llava_model(model_name: str, model_path: str, device: str):
     processor = LlavaNextProcessor.from_pretrained(model_path)
     vision_model = LlavaNextForConditionalGeneration.from_pretrained(
         model_path,
@@ -24,7 +29,7 @@ def load_models(model_name: str, model_path: str, device: str):
     )
     vision_tower = vision_model.vision_tower.to(device)
     multi_modal_projector = vision_model.multi_modal_projector.to(device)
-    hook_language_model = HookedLlava.from_pretrained(
+    hook_language_model = HookedLlava.from_pretrained_no_processing(
         model_name,
         hf_model=vision_model.language_model,
         device=device,
@@ -35,7 +40,7 @@ def load_models(model_name: str, model_path: str, device: str):
         dtype=torch.float32,
         vision_tower=vision_tower,
         multi_modal_projector=multi_modal_projector,
-        n_devices=4,
+        n_devices=2,
     )
     # hook_language_model = None
     return (
@@ -46,6 +51,19 @@ def load_models(model_name: str, model_path: str, device: str):
         hook_language_model,
     )
 
+def load_chameleon_model(model_name: str, model_path: str, device: str):
+    processor = ChameleonProcessor.from_pretrained(model_path)
+    hf_model = ChameleonForConditionalGeneration.from_pretrained(model_path, low_cpu_mem_usage=True)
+    model = HookedChameleon.from_pretrained(
+        model_name,
+        hf_model=hf_model,
+        device=device,
+        fold_ln=False,
+        center_writing_weights=False,
+        center_unembed=False,
+        tokenizer=processor.tokenizer,
+    )
+    return processor, hf_model, model
 
 def load_sae(sae_path: str, sae_device: str):
     sae = SAE.load_from_pretrained(
@@ -87,12 +105,12 @@ def load_dataset_func(dataset_path: str, columns_to_read: list):
 def prepare_input(processor,device, image_path: str, example_prompt: str):
     image = Image.open(image_path)
     image = image.resize((336, 336))
-    example_prompt = example_prompt + " <image>"
+    # example_prompt = example_prompt + " <image>"
     conversation = [
         {
             "role": "user",
             "content": [
-                {"type": "text", "text": example_prompt},
+                {"type": "text", "text": example_prompt+"<image>"},
             ],
         },
     ]
@@ -138,10 +156,13 @@ def run_model(inputs, hook_language_model, sae, sae_device: str):
 
 def patch_mapping(image_indice, feature_acts):
     assert image_indice.shape[0] == 1176
-    newline_indices = torch.arange(604, 1180, 25)
+    newline_indices = torch.arange(image_indice[0]+576+24-1, image_indice[0]+576*2+24-1, 25)
     valid_indices = torch.tensor(
         [i for i in image_indice if i not in newline_indices]
     )
+    # all_indices = torch.arange(feature_acts.size(0))
+    # mask = torch.isin(all_indices, image_indice, invert=True)
+    # text_features = feature_acts[:,mask]
     patch_indices = torch.stack(
         (valid_indices[:576], valid_indices[576:]), dim=1
     )
@@ -154,7 +175,7 @@ def patch_mapping(image_indice, feature_acts):
 
     # Step 2: Sum the L1 norms over the two activations for each patch
     total_activation_l1_norms = activation_l1_norms.sum(dim=1)  # Shape: (576,)
-    return total_activation_l1_norms,patch_features
+    return total_activation_l1_norms,patch_features,feature_acts
 
 def count_red_blue_elements(activation_colored_uint8, blue_threshold=200, red_threshold=200):
     """
@@ -180,7 +201,7 @@ def count_red_blue_elements(activation_colored_uint8, blue_threshold=200, red_th
     
     return blue_count, red_count
 
-def map_patches_to_image(total_activation_l1_norms,lower_clip=0.01,upper_clip=0.99,cmap='plasma'):
+def map_patches_to_image(total_activation_l1_norms,lower_clip=0.01,upper_clip=0.99,cmap='plasma',max_val=None):
     """
     Maps activation data from patches to the corresponding positions in the image.
 
@@ -214,8 +235,13 @@ def map_patches_to_image(total_activation_l1_norms,lower_clip=0.01,upper_clip=0.
     # Step 5: Normalize activation_l1_norms to [0, 1] for image representation
     activation_l1_norms_large = activation_l1_norms_large.float()
 
+    
+
     # 计算绝对值的最大值
-    max_abs_val = activation_l1_norms_large.abs().max()
+    if max_val is None:
+        max_abs_val = activation_l1_norms_large.abs().max()
+    else:
+        max_abs_val=max_val
 
     # 避免除以零的情况
     if max_abs_val == 0:
@@ -254,12 +280,12 @@ def map_patches_to_image(total_activation_l1_norms,lower_clip=0.01,upper_clip=0.
     return activation_map
 
 
-def overlay_activation_on_image(image, activation_map):
+def overlay_activation_on_image(image, activation_map,alpha=128):
     original_image = image.convert('RGBA')
     activation_map = activation_map.resize((336, 336)).convert('RGBA')
 
     # Adjust the transparency of the activation map
-    alpha = 128  # 0.5 transparency, value range 0-255
+    # alpha = 128  # 0.5 transparency, value range 0-255
     activation_map.putalpha(alpha)
 
     # Overlay the activation map on the original image
@@ -311,44 +337,57 @@ def generate_with_saev(inputs, hook_language_model, processor, save_path, image,
         previous_patch_features=None
 
         print(output)
-        for i, (tmp_cache, token) in enumerate(zip(tmp_cache_list, decoded_tokens[input_length:])):
-            tmp_cache = tmp_cache.to(sae_device)
-            feature_acts = sae.encode(tmp_cache)
-            image_indice = image_indice.to("cpu")
-            feature_acts = feature_acts.to("cpu")
-            total_activation_l1_norms,patch_features = patch_mapping(image_indice, feature_acts)
-            if previous_patch_features is not None:
-                patch_features=patch_features[(patch_features!=0).sum(dim=2)>50]
-                previous_patch_features=previous_patch_features[(previous_patch_features!=0).sum(dim=2)>50]
-                patch_features=patch_features.to("cuda")
-                previous_patch_features=previous_patch_features.to("cuda")
-                cos_sim = F.cosine_similarity(patch_features, previous_patch_features, dim=1)
-                mean_cos_sim = cos_sim.mean()
-                print(f"mean_cos_sim:{i}_{token}",mean_cos_sim)
+        
+        tmp_cache_list=[tmp_cache.to(sae_device) for tmp_cache in tmp_cache_list]
+        feature_acts_list = [sae.encode(tmp_cache) for tmp_cache in tmp_cache_list]
+        image_indice = image_indice.to("cpu")
+        feature_acts_list = [feature_acts.to("cpu") for feature_acts in feature_acts_list]
+        total_activation_l1_norms_list,patch_features_list,feature_acts_list = zip(*[patch_mapping(image_indice, feature_acts) for feature_acts in feature_acts_list])
+        # current_activation_map = map_patches_to_image(total_activation_l1_norms_list[0])
+        # final_image = overlay_activation_on_image(image, current_activation_map)
+        # final_image.save(os.path.join(save_path, f"current.png"))
+        # upper_bound = torch.quantile(torch.cat(total_activation_l1_norms_list), 0.99)
+        
+        
+        # for i, (tmp_cache, token) in enumerate(zip(tmp_cache_list, decoded_tokens[input_length:])):
+        #     tmp_cache = tmp_cache.to(sae_device)
+        #     feature_acts = sae.encode(tmp_cache)
+        #     image_indice = image_indice.to("cpu")
+        #     feature_acts = feature_acts.to("cpu")
+        #     total_activation_l1_norms,patch_features = patch_mapping(image_indice, feature_acts)
+        #     patch_features=patch_features[(patch_features!=0).sum(dim=2)>50]
+        #     if previous_patch_features is not None:
+        #         patch_features=patch_features.to("cuda")
+        #         previous_patch_features=previous_patch_features.to("cuda")
+        #         cos_sim = F.cosine_similarity(patch_features, previous_patch_features, dim=1)
+        #         mean_cos_sim = cos_sim.mean()
+        #         print(f"mean_cos_sim:{i}_{token}",mean_cos_sim)
             # print(total_activation_l1_norms.sum())
-            if previous_total_activation_l1_norms is None: 
-                current_activation_map = map_patches_to_image(total_activation_l1_norms)
-                final_image = overlay_activation_on_image(image, current_activation_map)
-                final_image.save(os.path.join(save_path, f"current_{i}_{token}.png"))
-                    
-            else:
-                # patch_features=patch_features.to("cuda")
-                # previous_patch_features=previous_patch_features.to("cuda")
-                # cos_sim = F.cosine_similarity(patch_features, previous_patch_features, dim=1)
-                # print(f"total_activation_l1_norms:",total_activation_l1_norms.sum())
-                # print(f"previous_total_activation_l1_norms:",previous_total_activation_l1_norms.sum())
-                diff = total_activation_l1_norms - previous_total_activation_l1_norms
-                shift_diff = filter_diff_by_std(diff)  # Shift to non-negative range
-                diff_activation_map = map_patches_to_image(shift_diff, lower_clip=0.01, upper_clip=0.99, cmap='bwr')
-                final_image = overlay_activation_on_image(image, diff_activation_map)
-                final_image.save(os.path.join(save_path, f"diff_{i}_{token}.png"))
-                if i%10==0:
-                    current_activation_map=map_patches_to_image(total_activation_l1_norms)
-                    final_image = overlay_activation_on_image(image, current_activation_map)
-                    final_image.save(os.path.join(save_path, f"current_{i}_{token}.png"))
+            # if previous_total_activation_l1_norms is None: 
+                # current_activation_map = map_patches_to_image(total_activation_l1_norms)
+                # final_image = overlay_activation_on_image(image, current_activation_map)
+                # final_image.save(os.path.join(save_path, f"current_{i}_{token}.png"))
+            # current_activation_map = map_patches_to_image(total_activation_l1_norms)
+            # final_image = overlay_activation_on_image(image, current_activation_map)
+            # final_image.save(os.path.join(save_path, f"current_{i}_{token}.png"))
+            # else:
+            #     # patch_features=patch_features.to("cuda")
+            #     # previous_patch_features=previous_patch_features.to("cuda")
+            #     # cos_sim = F.cosine_similarity(patch_features, previous_patch_features, dim=1)
+            #     # print(f"total_activation_l1_norms:",total_activation_l1_norms.sum())
+            #     # print(f"previous_total_activation_l1_norms:",previous_total_activation_l1_norms.sum())
+            #     diff = total_activation_l1_norms - previous_total_activation_l1_norms
+            #     shift_diff = filter_diff_by_std(diff)  # Shift to non-negative range
+            #     diff_activation_map = map_patches_to_image(shift_diff, lower_clip=0.01, upper_clip=0.99, cmap='bwr')
+            #     final_image = overlay_activation_on_image(image, diff_activation_map)
+            #     final_image.save(os.path.join(save_path, f"diff_{i}_{token}.png"))
+            #     if i%10==0:
+            #         current_activation_map=map_patches_to_image(total_activation_l1_norms)
+            #         final_image = overlay_activation_on_image(image, current_activation_map)
+            #         final_image.save(os.path.join(save_path, f"current_{i}_{token}.png"))
 
-            previous_total_activation_l1_norms = total_activation_l1_norms
-            previous_patch_features=patch_features
+            # previous_total_activation_l1_norms = total_activation_l1_norms
+            # previous_patch_features=patch_features
         # tmp_cache = cache[sae.cfg.hook_name]
         # tmp_cache = tmp_cache.to(sae_device)
         # feature_acts = sae.encode(tmp_cache)
@@ -362,22 +401,22 @@ def generate_with_saev(inputs, hook_language_model, processor, save_path, image,
         # plt.grid(True)
         # plt.savefig(os.path.join(save_path, "activation_diff_plot.png"))
         # plt.show()
-    return image_indice, feature_acts
+    return total_activation_l1_norms_list,patch_features_list,feature_acts_list,image_indice
 
 
 def main():
     MODEL_NAME = "llava-hf/llava-v1.6-mistral-7b-hf"
     model_path = "/mnt/data/changye/model/llava"
-    device = "cuda:4"
-    sae_device = "cuda:7"
+    device = "cuda:5"
+    sae_device = "cuda:6"
     sae_path = "/mnt/data/changye/checkpoints/xepk4xea/final_163840000"
     dataset_path = "/mnt/data/changye/data/obelics3k-tokenized-llava4096"
     columns_to_read = ["input_ids", "pixel_values", "attention_mask", "image_sizes"]
     example_prompt = "What is shown in this image?"
     # example_answer = "Apple"
-    image_path = "/home/saev/changye/R.jpg"
+    image_path = "/home/saev/changye/blue.jpg"
     save_path = "/home/saev/changye/SAELens-V/activation_visualization"
-    torch.cuda.empty_cache()
+
 
     (
         processor,
@@ -385,7 +424,7 @@ def main():
         vision_tower,
         multi_modal_projector,
         hook_language_model,
-    ) = load_models(MODEL_NAME, model_path, device)
+    ) = load_llava_model(MODEL_NAME, model_path, device)
 
     sae = load_sae(sae_path, sae_device)
 
