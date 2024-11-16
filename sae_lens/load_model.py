@@ -2,6 +2,8 @@ from typing import Any, cast
 
 import torch
 from transformer_lens import HookedTransformer
+import os
+
 try:
     from transformer_lens import HookedChameleon
 except Exception as e:
@@ -21,11 +23,15 @@ def load_model(
 
     if "n_devices" in model_from_pretrained_kwargs:
         n_devices = model_from_pretrained_kwargs["n_devices"]
-        if n_devices > 1:
+        if n_devices >= 1:
+            # get available devices from CUDA_VISIBLE_DEVICES
+            available_devices = os.environ["CUDA_VISIBLE_DEVICES"].split(",")
+            use_devices = available_devices[:n_devices]
+            print(f"Available devices: {available_devices}")
             print("MODEL LOADING:")
             print("Setting model device to cuda for d_devices")
-            print(f"Will use cuda:0 to cuda:{n_devices-1}")
-            device = "cuda"
+            print(f"Will use cuda {use_devices}")
+            device = "cuda:0"
             print("-------------")
 
     if local_model_path is not None:

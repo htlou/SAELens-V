@@ -3,17 +3,22 @@ import os
 
 os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
 os.environ["WANDB_API_KEY"] = "7e2dcc0c310ebcb7cdcafd5e9320d6be55cf1a33"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0,1"
+os.environ["CUDA_VISIBLE_DEVICES"] = "2,3"
 os.environ["WANDB_MODE"] = "offline"
+
+if torch.cuda.is_available():
+    num_gpus = torch.cuda.device_count()
+    print(f"Number of GPUs available: {num_gpus}")
 
 from sae_lens import LanguageModelSAERunnerConfig, SAETrainingRunner
 total_training_steps = 30_000  # probably we should do more
-batch_size = 8192
+batch_size = 4096
 total_training_tokens = total_training_steps * batch_size
 
 lr_warm_up_steps = 0
 lr_decay_steps = total_training_steps // 5  # 20% of training
 l1_warm_up_steps = total_training_steps // 20  # 5% of training
+
 
 device = "cuda:1"
 cfg = LanguageModelSAERunnerConfig(
@@ -24,8 +29,8 @@ cfg = LanguageModelSAERunnerConfig(
     hook_name="blocks.16.hook_resid_post",  # A valid hook point (see more details here: https://neelnanda-io.github.io/TransformerLens/generated/demos/Main_Demo.html#Hook-Points)
     hook_layer=16,  # Only one layer in the model.
     d_in=4096,  # the width of the mlp output.
-    dataset_path="/home/saev/changye/data/pile100k",  # this is a tokenized language dataset on Huggingface for the Tiny Stories corpus.
-    is_dataset_tokenized=False,
+    dataset_path="htlou/obelics_obelics_100k_tokenized_2048",  # this is a tokenized language dataset on Huggingface for the Tiny Stories corpus.
+    is_dataset_tokenized=True,
     streaming=False,  # we could pre-download the token dataset if it was small.
     # SAE Parameters
     mse_loss_normalization=None,  # We won't normalize the mse loss,

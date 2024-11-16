@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from datasets import Dataset, DatasetDict, IterableDataset, load_dataset
 from huggingface_hub import hf_hub_download
-from huggingface_hub.utils._errors import HfHubHTTPError
+from huggingface_hub.errors import HfHubHTTPError
 from requests import HTTPError
 from safetensors import safe_open
 from safetensors.torch import save_file
@@ -151,6 +151,7 @@ class ActivationsStore:
         if model_kwargs is None:
             model_kwargs = {}
         self.model_kwargs = model_kwargs
+        print(f"Using dataset: {dataset}")
         self.dataset = (
             load_dataset(
                 dataset,
@@ -161,6 +162,7 @@ class ActivationsStore:
             if isinstance(dataset, str)
             else dataset
         )
+        print(f"Finished loading dataset: {self.dataset}")
 
         if isinstance(dataset, (Dataset, DatasetDict)):
             self.dataset = cast(Dataset | DatasetDict, self.dataset)
@@ -199,15 +201,19 @@ class ActivationsStore:
         if "tokens" in dataset_sample.keys():
             self.is_dataset_tokenized = True
             self.tokens_column = "tokens"
+            print(f"Using raw tokens")
         elif "input_ids" in dataset_sample.keys():
             self.is_dataset_tokenized = True
             self.tokens_column = "input_ids"
+            print(f"Using tokenized input_ids")
         elif "text" in dataset_sample.keys():
             self.is_dataset_tokenized = False
             self.tokens_column = "text"
+            print(f"Using raw text")
         elif "problem" in dataset_sample.keys():
             self.is_dataset_tokenized = False
             self.tokens_column = "problem"
+            print(f"Using raw problem")
         else:
             raise ValueError(
                 "Dataset must have a 'tokens', 'input_ids', 'text', or 'problem' column."
