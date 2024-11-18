@@ -409,7 +409,7 @@ def main():
     model_path = "/mnt/data/changye/model/llava"
     device = "cuda:5"
     sae_device = "cuda:6"
-    sae_path = "/mnt/data/changye/checkpoints/xepk4xea/final_163840000"
+    sae_path = "/mnt/data/changye/checkpoints/checkpoints-V/kxpk98cr/final_122880000"
     dataset_path = "/mnt/data/changye/data/obelics3k-tokenized-llava4096"
     columns_to_read = ["input_ids", "pixel_values", "attention_mask", "image_sizes"]
     example_prompt = "What is shown in this image?"
