@@ -143,7 +143,7 @@ def run_model(inputs, hook_language_model, sae, sae_device: str):
             vision=True,
             prepend_bos=True,
             names_filter=lambda name: name == sae.cfg.hook_name,
-            return_type="image_indices",
+            return_type="generate_with_saev",
         )
 
         tmp_cache = cache[sae.cfg.hook_name]

@@ -555,6 +555,7 @@ class SAE(HookedRootModule):
     ) -> Float[torch.Tensor, "... d_in"]:
         """Decodes SAE feature activation tensor into a reconstructed input activation tensor."""
         # "... d_sae, d_sae d_in -> ... d_in",
+
         sae_out = self.hook_sae_recons(
             self.apply_finetuning_scaling_factor(feature_acts) @ self.W_dec + self.b_dec
         )
