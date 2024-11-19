@@ -11,7 +11,7 @@ from sae_lens.activation_visualization import (
 
 
 # 加载 SAE 模型
-sae_path = "/mnt/data/changye/checkpoints/checkpoints-V/kxpk98cr/final_122880000"
+sae_path = "/mnt/data/changye/checkpoints/checkpoints-Llavatext/xepk4xea/final_163840000"
 sae_device = "cuda:0"
 sae = load_sae(sae_path, sae_device)
 
@@ -19,7 +19,7 @@ sae = load_sae(sae_path, sae_device)
 features = sae.W_dec.cpu().detach().numpy()  # [65536, 4096]
 
 # 读取激活次数
-act_data_path = "/home/saev/changye/SAELens-V/activation_visualization/color_experiment/count_table1000.txt"
+act_data_path = "/home/saev/changye/SAELens-V/activation_visualization/color_experiment/llava_sae_color30k_results.txt"
 activation_counts = np.zeros(features.shape[0], dtype=int)
 
 with open(act_data_path, "r") as f:
@@ -69,7 +69,7 @@ sorted_indices = np.argsort(selected_activation_counts)  # 从低到高排序
 embedded_points = embedded_points[sorted_indices]
 sorted_activation_counts = selected_activation_counts[sorted_indices]
 # 保存 UMAP 结果到文件
-csv_output_path = "umap_results_sampled_inactive.csv"
+csv_output_path = "/home/saev/changye/SAELens-V/activation_visualization/color_experiment/umap_sae_30kresults_sampled_inactive.csv"
 np.savetxt(
     csv_output_path,
     np.column_stack((embedded_points, selected_activation_counts)),
@@ -100,7 +100,7 @@ plt.xlabel("UMAP Component 1")
 plt.ylabel("UMAP Component 2")
 
 # 保存为图片文件
-image_output_path = "umap_visualization_sampled_inactive.png"
+image_output_path = "/home/saev/changye/SAELens-V/activation_visualization/color_experiment/umap_sae_30K_visualization_sampled_inactive.png"
 plt.savefig(image_output_path, format="png", dpi=300)
 print(f"UMAP 可视化图已保存到 {image_output_path}")
 
