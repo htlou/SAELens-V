@@ -13,6 +13,7 @@ from datasets import load_dataset
 from sae_lens.activation_visualization import (
     load_llava_model,
     load_sae,
+    separate_feature,
 )
 
 def parse_arguments():
@@ -62,6 +63,7 @@ def prepare_batch_text_input(processor, device, texts):
     return inputs
 
 def run_model(inputs, hook_language_model, sae, sae_device, is_text=False):
+    image_indices=None
     with torch.no_grad():
         if is_text:
             cache = hook_language_model.run_with_cache(
@@ -86,7 +88,7 @@ def run_model(inputs, hook_language_model, sae, sae_device, is_text=False):
         feature_acts = sae.encode(tmp_cache)
         sae_out = sae.decode(feature_acts)
         del cache
-    return feature_acts
+    return image_indices,feature_acts
 
 def save_results(output_path, feature_acts_count_table):
     with open(output_path, "w") as f:
@@ -104,11 +106,13 @@ def process_images(sampled_png_files, image_path, processor, device, hook_langua
             batch_files = sampled_png_files[i:i+batch_size]
             batch_file_paths = [os.path.join(image_path, f) for f in batch_files]
      
-            inputs = prepare_batch_input(processor, device, batch_file_paths, example_prompt)
+            inputs = prepare_batch_image_input(processor, device, batch_file_paths, example_prompt)
            
-            _, feature_act = run_model(inputs, hook_language_model, sae, sae_device)
+            image_indices, feature_act = run_model(inputs, hook_language_model, sae, sae_device)
             # feature_act 的形状：[batch_size, sequence_length, feature_dim]
             feature_act = feature_act.cpu().detach().numpy()
+            
+            cooccurrence_feature=separate_feature(image_indices,feature_act)
             # 获取每个样本最后一个 token 的激活值
             last_token_feature_act = feature_act[:, -1, :]  # 形状：[batch_size, feature_dim]
             # 找出激活值大于 1 的索引
@@ -169,8 +173,7 @@ def main():
     sae = load_sae(sae_path, sae_device)
 
     if args.data_type == 'image':
-        example_prompt = "The color in this image is"
-        image_path = "/home/saev/changye/data/colors/color_images"
+        image_path = "/data/changye/data/SPA-VL"
         files = os.listdir(image_path)
         png_files = [f for f in files if f.lower().endswith('.png')]
         png_files.sort()

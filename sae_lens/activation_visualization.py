@@ -20,7 +20,7 @@ from transformer_lens.hook_points import (
 # pdb.set_trace()
 
 
-def load_llava_model(model_name: str, model_path: str, device: str):
+def load_llava_model(model_name: str, model_path: str, device: str,n_devices:str):
     processor = LlavaNextProcessor.from_pretrained(model_path)
     vision_model = LlavaNextForConditionalGeneration.from_pretrained(
         model_path,
@@ -40,7 +40,7 @@ def load_llava_model(model_name: str, model_path: str, device: str):
         dtype=torch.float32,
         vision_tower=vision_tower,
         multi_modal_projector=multi_modal_projector,
-        n_devices=2,
+        n_devices=8,
     )
     # hook_language_model = None
     return (
@@ -95,7 +95,7 @@ def load_dataset_func(dataset_path: str, columns_to_read: list):
         )
     if isinstance(dataset, (Dataset, DatasetDict)):
         dataset = cast(Dataset | DatasetDict, dataset)
-    ds_context_size = len(dataset["input_ids"])
+    
     if hasattr(dataset, "set_format"):
         dataset.set_format(type="torch", columns=columns_to_read)
         print("Dataset format set.")
@@ -153,6 +153,24 @@ def run_model(inputs, hook_language_model, sae, sae_device: str):
         del cache
     return image_indice, feature_acts
 
+def separate_feature(image_indice, feature_acts):
+    import pdb;pdb.set_trace()
+    #separate image activations and text activations to capture co-occurrence features 
+    assert image_indice.shape[0] == 1176
+    text_features_act=torch.cat(feature_act[:(image_indice[0])],feature_act[(image_indice[-1]+1):])
+    image_features_act=torch.cat(feature_act[(image_indice[0]):],feature_act[:(image_indice[-1]+1)])
+    text_union=[]
+    image_union=[]
+    for text_feature in text_features_act:
+        text_indices = np.where(text_feature > 1)
+        text_union=list(set(text_union).union(set(text_indices)))
+    for image_feature in image_features_act:
+        image_indices= np.where(image_feature>1)
+        image_union=list(set(image_union).union(set(image_indices)))
+        
+    cooccurrence_feature=list(set(text_union).intersection(set(image_union)))
+    
+    return cooccurrence_feature
 
 def patch_mapping(image_indice, feature_acts):
     assert image_indice.shape[0] == 1176
@@ -174,7 +192,7 @@ def patch_mapping(image_indice, feature_acts):
     activation_l1_norms = patch_features.abs().sum(dim=2)  # Shape: (576, 2)
 
     # Step 2: Sum the L1 norms over the two activations for each patch
-    total_activation_l1_norms = activation_l1_norms.sum(dim=1)  # Shape: (576,)
+    total_activation_l1_norms = activation_l1_norms.mean(dim=1)  # Shape: (576,)
     return total_activation_l1_norms,patch_features,feature_acts
 
 def count_red_blue_elements(activation_colored_uint8, blue_threshold=200, red_threshold=200):

@@ -12,7 +12,7 @@ def upload_files_in_directory(directory_path, repo_name, username, token, ignore
     
     # 创建新的私有仓库（如果已存在则忽略）
     try:
-        api.create_repo(repo_id=repo_id, token=token, exist_ok=True, private=True, repo_type="dataset")
+        api.create_repo(repo_id=repo_id, token=token, exist_ok=True, private=True, repo_type="model")
         print(f"仓库 {repo_id} 已创建或已存在。")
     except Exception as e:
         print(f"创建仓库 {repo_id} 时出错：{e}")
@@ -30,7 +30,7 @@ def upload_files_in_directory(directory_path, repo_name, username, token, ignore
             folder_path=directory_path,
             path_in_repo="",  # 将文件上传到仓库的根目录
             repo_id=repo_id,
-            repo_type="dataset",
+            repo_type="model",
             token=token,
             ignore_patterns=ignore_patterns,
         )
@@ -42,13 +42,13 @@ def main():
 
     # Hugging Face 用户名和 Token
     username = "Antoinegg1"         # 请替换为您的用户名
-    token = "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"          # 请替换为您的 Hugging Face 访问令牌
+    token = "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"          # 请替换为您的 Hugging Face 访问令牌
 
     # 指定目标仓库名称和目录
     name_groups = [
         {
-            "directory_path": "/mnt/data/changye/checkpoint_z",
-            "repo_name": "checkpoint_z",
+            "directory_path": "/data/changye/model/llava-alpaca/slice_end",
+            "repo_name": "llava-alpaca52k",
             "ignore_dirs": []
         }
     ]
