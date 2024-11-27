@@ -75,7 +75,7 @@ def run_model(inputs, hook_language_model, sae, sae_device, is_text=False):
                 return_type="generate",
             )
         else:
-            image_indices, cache = hook_language_model.run_with_cache(
+            _,image_indices, cache = hook_language_model.run_with_cache(
                 input=inputs,
                 model_inputs=inputs,
                 vision=True,

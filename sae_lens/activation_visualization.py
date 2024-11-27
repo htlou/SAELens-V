@@ -43,11 +43,9 @@ def load_llava_model(model_name: str, model_path: str, device: str,n_devices:str
         n_devices=8,
     )
     # hook_language_model = None
+    del vision_model,vision_tower,multi_modal_projector
     return (
         processor,
-        vision_model,
-        vision_tower,
-        multi_modal_projector,
         hook_language_model,
     )
 
@@ -147,30 +145,58 @@ def run_model(inputs, hook_language_model, sae, sae_device: str):
         )
 
         tmp_cache = cache[sae.cfg.hook_name]
+        
         tmp_cache = tmp_cache.to(sae_device)
         feature_acts = sae.encode(tmp_cache)
+        # print(feature_acts.shape)
         sae_out = sae.decode(feature_acts)
         del cache
     return image_indice, feature_acts
 
 def separate_feature(image_indice, feature_acts):
-    import pdb;pdb.set_trace()
-    #separate image activations and text activations to capture co-occurrence features 
-    assert image_indice.shape[0] == 1176
-    text_features_act=torch.cat(feature_act[:(image_indice[0])],feature_act[(image_indice[-1]+1):])
-    image_features_act=torch.cat(feature_act[(image_indice[0]):],feature_act[:(image_indice[-1]+1)])
-    text_union=[]
-    image_union=[]
-    for text_feature in text_features_act:
-        text_indices = np.where(text_feature > 1)
-        text_union=list(set(text_union).union(set(text_indices)))
-    for image_feature in image_features_act:
-        image_indices= np.where(image_feature>1)
-        image_union=list(set(image_union).union(set(image_indices)))
-        
-    cooccurrence_feature=list(set(text_union).intersection(set(image_union)))
-    
-    return cooccurrence_feature
+    # image_indice: Tensor of shape (batch_size, num_indices)
+    # feature_acts: List or Tensor of shape (batch_size, sequence_length, feature_dim)
+    batch_size = image_indice.shape[0]
+    cooccurrence_features = []
+    for i in range(batch_size):
+        # For each sample in the batch
+        sample_image_indice = image_indice[i]  # shape (num_indices,)
+        # Ensure the number of indices matches expected size
+        assert sample_image_indice.shape[0] == 1176
+
+        sample_feature_acts = feature_acts[i]  # shape (sequence_length, feature_dim)
+
+        # Convert indices to lists if they are tensors
+        sample_image_indice = sample_image_indice.tolist()
+
+        # Separate text and image activations
+        text_features_act = torch.cat(
+            [sample_feature_acts[:sample_image_indice[0]],
+             sample_feature_acts[sample_image_indice[-1]+1:]],
+            dim=0
+        )
+        image_features_act = sample_feature_acts[sample_image_indice[0]: sample_image_indice[-1]+1]
+
+        # Initialize unions
+        text_union = set()
+        image_union = set()
+
+        # Process text features
+        for text_feature in text_features_act:
+            text_indices = torch.where(text_feature > 1)[0].tolist()
+            text_union.update(text_indices)
+
+        # Process image features
+        for image_feature in image_features_act:
+            image_indices = torch.where(image_feature > 1)[0].tolist()
+            image_union.update(image_indices)
+
+        # Find co-occurrence features
+        cooccurrence_feature = list(text_union.intersection(image_union))
+        cooccurrence_features.append(cooccurrence_feature)
+
+    return cooccurrence_features
+
 
 def patch_mapping(image_indice, feature_acts):
     assert image_indice.shape[0] == 1176
