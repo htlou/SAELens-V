@@ -96,12 +96,11 @@ def main(args):
 
     # 按批次准备输入
     with tqdm.tqdm(total=len(formatted_dataset), desc="Processing batches") as pbar:
-
-        max_processes = 100  # 这里设置你希望的并行进程数
-        with concurrent.futures.ProcessPoolExecutor(max_workers=max_processes) as executor:
+        max_threads = 100  # 设置你希望的线程数，可以根据需要调整
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
             futures = []
-            
-            # 提交所有任务到进程池
+
+            # 提交所有任务到线程池
             for i in range(0, len(formatted_dataset), args.batch_size):
                 future = executor.submit(process_batch, 
                                         i, 
@@ -109,12 +108,12 @@ def main(args):
                                         processor, 
                                         args)
                 futures.append(future)
-            
+
             # 按照完成顺序获取任务结果并更新进度条
             for future in concurrent.futures.as_completed(futures):
-                inputs = future.result()
-                all_inputs.append(inputs)
-                pbar.update(args.batch_size)
+                inputs = future.result()  # 获取每个批次处理后的结果
+                all_inputs.append(inputs)  # 将处理的结果添加到 all_inputs
+                pbar.update(args.batch_size)  # 更新进度条
         
     processed_count = 0
     total_processed = 0
