@@ -135,7 +135,7 @@ def image_recover(inputs, processor):
 
 def run_model(inputs, hook_language_model, sae, sae_device: str):
     with torch.no_grad():
-        image_indice, cache = hook_language_model.run_with_cache(
+        out, cache = hook_language_model.run_with_cache(
             input=inputs,
             model_inputs=inputs,
             vision=True,
@@ -143,7 +143,7 @@ def run_model(inputs, hook_language_model, sae, sae_device: str):
             names_filter=lambda name: name == sae.cfg.hook_name,
             return_type="generate_with_saev",
         )
-
+        image_indice=out[1]
         tmp_cache = cache[sae.cfg.hook_name]
         
         tmp_cache = tmp_cache.to(sae_device)
