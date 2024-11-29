@@ -59,26 +59,28 @@ def prepare_inputs(processor, formatted_sample, device):
         text=formatted_sample['prompt'],
         images=formatted_sample['image'],
         return_tensors='pt',
-        padding='max_length',
+        padding=True, 
+        truncation=True,
         max_length=256,
-    ).to(device)
+    )
 
-def save_cooccurrence_features(cooccurrence_feature_list,inputs_name_list, batch_idx,batch_size=999):
+def save_cooccurrence_features(cooccurrence_feature_list,inputs_name_list,total_processed):
     """保存共现特征"""
     data_dict = {}
-    for i in range(batch_idx,max(batch_idx+batch_size,len(cooccurrence_feature_list))):
-        data_dict[inputs_name_list['image_name'][i]] = cooccurrence_feature_list[i]  # 使用批次索引作为文件名的一部分
-    file_path = os.path.join(f"/data/changye/data/SPA_VL_cooccur/", f'cooccurrence_batch_{batch_idx}.pt')
+    for i in range(len(cooccurrence_feature_list)):
+        data_dict[inputs_name_list[i]] = cooccurrence_feature_list[i]  # 使用批次索引作为文件名的一部分
+    file_path = os.path.join(f"/data/changye/data/SPA_VL_cooccur/", f'cooccurrence_batch_{total_processed}.pt')
     torch.save(data_dict, file_path)
     
-    print(f"Batch {batch_idx} saved.")
+    print(f"Batch {total_processed} saved.")
 
-def process_batch(i, formatted_dataset, processor, args):
+def process_batch(i, formatted_dataset, processor, args,step):
     batch = {
-        "image": formatted_dataset['image'][i:i + args.batch_size],
-        "prompt": formatted_dataset['prompt'][i:i + args.batch_size]
+        "image": formatted_dataset['image'][i:i + step],
+        "prompt": formatted_dataset['prompt'][i:i + step],
     }
     inputs = prepare_inputs(processor, batch, args.device)
+    inputs["image_name"]=formatted_dataset["image_name"][i:i + step]
     return inputs
 
 
@@ -96,40 +98,59 @@ def main(args):
 
     # 按批次准备输入
     with tqdm.tqdm(total=len(formatted_dataset), desc="Processing batches") as pbar:
-        max_threads = 100  # 设置你希望的线程数，可以根据需要调整
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
+        # max_threads = 100  # 设置你希望的线程数，可以根据需要调整
+        with concurrent.futures.ThreadPoolExecutor() as executor:
             futures = []
-
+            thread_step=300
             # 提交所有任务到线程池
-            for i in range(0, len(formatted_dataset), args.batch_size):
+            for i in range(0, len(formatted_dataset), thread_step):
                 future = executor.submit(process_batch, 
                                         i, 
                                         formatted_dataset, 
                                         processor, 
-                                        args)
+                                        args,thread_step)
                 futures.append(future)
 
-            # 按照完成顺序获取任务结果并更新进度条
+            # 使用 as_completed 确保任务完成后及时更新进度条
             for future in concurrent.futures.as_completed(futures):
                 inputs = future.result()  # 获取每个批次处理后的结果
                 all_inputs.append(inputs)  # 将处理的结果添加到 all_inputs
-                pbar.update(args.batch_size)  # 更新进度条
-        
+                pbar.update(thread_step)  # 更新进度条
+                pbar.refresh()  # 强制刷新进度条，确保显示更新
+
+    batch_list = []
+    for d in all_inputs:
+            for i in range(0, thread_step, args.batch_size):
+                tensor={}
+                for key in d:
+                    tensor[key]=d[key][i:(i+args.batch_size)]
+                batch_list.append(tensor)
+
     processed_count = 0
     total_processed = 0
 
     cooccurrence_feature_list=[]
     inputs_name_list=[]
 
-    with tqdm.tqdm(total=len(all_inputs), desc="Processing batches") as pbar:
-        for batch_idx, inputs_batch in enumerate(all_inputs):
-            # 运行模型并提取特征
+    with tqdm.tqdm(total=len(batch_list), desc="Processing cooccurrence") as pbar:
+        for batch_idx, inputs_batch in enumerate(batch_list):
             torch.cuda.empty_cache()
+            inputs_batch={
+                'input_ids':inputs_batch['input_ids'].to(args.device),
+                'attention_mask':inputs_batch['attention_mask'].to(args.device),
+                'pixel_values':inputs_batch['pixel_values'].to(args.device),
+                'image_sizes':inputs_batch['image_sizes'].to(args.device),
+                'image_name':inputs_batch['image_name'],
+                          }
+            # 运行模型并提取特征
+
             image_indices, feature_act = run_model(inputs_batch, hook_language_model, sae, args.sae_device)
+            if image_indices is None or feature_act is None:
+                continue
             cooccurrence_feature = separate_feature(image_indices, feature_act)
-            for feature,batch in zip(cooccurrence_feature,inputs_batch):
+            for feature,batch in zip(cooccurrence_feature,inputs_batch["image_name"]):
                 cooccurrence_feature_list.append(feature)
-                inputs_name_list.append(batch["image_name"])
+                inputs_name_list.append(batch)
             # 更新已处理的数据数量
             processed_count += args.batch_size
             total_processed += args.batch_size
@@ -137,16 +158,18 @@ def main(args):
             pbar.update(1)
 
             # 保存当前批次的特征（每1000条数据保存一次）
-            if processed_count >= 999:
-                save_cooccurrence_features(cooccurrence_feature_list,inputs_name_list, batch_idx, batch_size=999)
+            if processed_count >= 1000:
+                save_cooccurrence_features(cooccurrence_feature_list,inputs_name_list,total_processed)
                 print(f"Processed {total_processed} data and saved features.")
 
                 # 重置处理计数
                 processed_count = 0
+                cooccurrence_feature_list=[]
+                inputs_name_list=[]
 
         # 最后一批数据可能没有满1000条，确保保存它们
         if processed_count > 0:
-            save_cooccurrence_features(cooccurrence_feature, inputs_name_list,batch_idx,batch_size=999)
+            save_cooccurrence_features(cooccurrence_feature, inputs_name_list,total_processed)
             print(f"Processed {total_processed} data and saved features.")
 
     print("Feature extraction and saving complete.")
@@ -164,8 +187,8 @@ if __name__ == "__main__":
 
     # Dataset configurations
     parser.add_argument('--dataset_path', type=str, default="/data/changye/data/SPA-VL", help="Path to the dataset.")
-    parser.add_argument('--sample_size', type=int, default=4000, help="Number of samples to randomly select.")
-    parser.add_argument('--batch_size', type=int, default=3, help="Batch size for each processing step.")
+    parser.add_argument('--sample_size', type=int, default=100000, help="Number of samples to randomly select.")
+    parser.add_argument('--batch_size', type=int, default=8, help="Batch size for each processing step.")
 
     args = parser.parse_args()
     
