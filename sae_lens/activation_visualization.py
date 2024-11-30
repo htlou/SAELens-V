@@ -20,7 +20,7 @@ from transformer_lens.hook_points import (
 # pdb.set_trace()
 
 
-def load_llava_model(model_name: str, model_path: str, device: str,n_devices:str):
+def load_llava_model(model_name: str, model_path: str, device: str,n_devices:str,stop_at_layer:int=None):
     processor = LlavaNextProcessor.from_pretrained(model_path)
     vision_model = LlavaNextForConditionalGeneration.from_pretrained(
         model_path,
@@ -40,7 +40,8 @@ def load_llava_model(model_name: str, model_path: str, device: str,n_devices:str
         dtype=torch.float32,
         vision_tower=vision_tower,
         multi_modal_projector=multi_modal_projector,
-        n_devices=8,
+        n_devices=n_devices,
+        stop_at_layer=stop_at_layer,
     )
     # hook_language_model = None
     del vision_model,vision_tower,multi_modal_projector
@@ -133,7 +134,7 @@ def image_recover(inputs, processor):
     return img_recover
 
 
-def run_model(inputs, hook_language_model, sae, sae_device: str):
+def run_model(inputs, hook_language_model, sae, sae_device: str,stop_at_layer):
     with torch.no_grad():
         out, cache = hook_language_model.run_with_cache(
             input=inputs,
@@ -141,6 +142,7 @@ def run_model(inputs, hook_language_model, sae, sae_device: str):
             vision=True,
             prepend_bos=True,
             names_filter=lambda name: name == sae.cfg.hook_name,
+            stop_at_layer=stop_at_layer,
             return_type="generate_with_saev",
         )
         image_indice=out[1]

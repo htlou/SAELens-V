@@ -13,27 +13,33 @@ from sae_lens.activation_visualization import (
 )
 import concurrent.futures
 from transformers import AutoTokenizer, LlavaNextForConditionalGeneration, LlavaNextProcessor, AutoModelForCausalLM
-
+os.environ['TMPDIR'] = '/data/changye/tmp'
+os.environ['HF_DATASETS_CACHE']='/data/changye/tmp'
+# export HF_DATASETS_CACHE='/data/changye/tmp'
 # # 配置代理
 # os.environ["HF_ENDPOINT"]="https://hf-mirror.com"
 # os.environ["http_proxy"] = "http://127.0.0.1:7890"
 # os.environ["https_proxy"] = "http://127.0.0.1:7890"
 
-def load_and_process_model(model_name: str, model_path: str, device: str, sae_path: str, sae_device: str, n_devices: int = 7):
+def load_and_process_model(model_name: str, model_path: str, device: str, sae_path: str, sae_device: str, n_devices: int = 7,stop_at_layer:int=None):
     """加载 LLaVA 模型和 SAE"""
-    processor, hook_language_model = load_llava_model(model_name, model_path, device, n_devices)
+    processor, hook_language_model = load_llava_model(model_name, model_path, device, n_devices,stop_at_layer=stop_at_layer)
     sae = load_sae(sae_path, sae_device)
     return processor, hook_language_model, sae
 
-def load_and_sample_dataset(dataset_path: str, sample_size: int = 2):
+def load_and_sample_dataset(dataset_path: str, start_idx,end_idx):
     """加载并从数据集中抽取样本"""
     train_dataset = load_dataset(dataset_path, split="train", trust_remote_code=True)
     total_size = len(train_dataset)
-    if sample_size >= total_size:
-        print(f"sample size is larger than total size {total_size}, returning full train dataset")
-        return train_dataset
-    random_indices = random.sample(range(total_size), sample_size)
-    sampled_dataset = train_dataset.select(random_indices)
+    if start_idx >= total_size:
+        print(f"start index {start_idx} is beyond the dataset size {total_size}, returning empty dataset")
+        return train_dataset.select([])  # 返回空的数据集
+
+    if end_idx > total_size:
+        end_idx = total_size  # 限制结束索引不超出数据集范围
+
+    # 选择指定范围的样本
+    sampled_dataset = train_dataset.select(range(start_idx, end_idx))
     return sampled_dataset
 
 def format_sample(raw_sample: dict):
@@ -64,15 +70,20 @@ def prepare_inputs(processor, formatted_sample, device):
         max_length=256,
     )
 
-def save_cooccurrence_features(cooccurrence_feature_list,inputs_name_list,total_processed):
+def save_cooccurrence_features(cooccurrence_feature_list,inputs_name_list,l0_act_list,total_processed,save_path,start_idx):
     """保存共现特征"""
-    data_dict = {}
-    for i in range(len(cooccurrence_feature_list)):
-        data_dict[inputs_name_list[i]] = cooccurrence_feature_list[i]  # 使用批次索引作为文件名的一部分
-    file_path = os.path.join(f"/data/changye/data/SPA_VL_cooccur/", f'cooccurrence_batch_{total_processed}.pt')
-    torch.save(data_dict, file_path)
+    cooccurrence_dict = {}
+    l0_dict={}
+    for i in range(len(inputs_name_list)):
+        cooccurrence_dict[inputs_name_list[i]] = cooccurrence_feature_list[i]  # 使用批次索引作为文件名的一部分
+        l0_dict[inputs_name_list[i]]=l0_act_list[i]
+    count=total_processed+start_idx
+    cooccurrence_file_path = os.path.join(save_path, f'cooccurrence_batch_{count}.pt')
+    l0_file_path=os.path.join(save_path, f'l0_batch_{count}.pt')
+    torch.save(cooccurrence_dict, cooccurrence_file_path)
+    torch.save(l0_dict, l0_file_path)
     
-    print(f"Batch {total_processed} saved.")
+    print(f"Batch {count} saved.")
 
 def process_batch(i, formatted_dataset, processor, args,step):
     batch = {
@@ -85,12 +96,12 @@ def process_batch(i, formatted_dataset, processor, args,step):
 
 
 def main(args):
-    import pdb;pdb.set_trace()
+    # import pdb;pdb.set_trace()
     # 加载模型和数据
     processor, hook_language_model, sae = load_and_process_model(
-        args.model_name, args.model_path, args.device, args.sae_path, args.sae_device, n_devices=args.n_devices
+        args.model_name, args.model_path, args.device, args.sae_path, args.sae_device, n_devices=args.n_devices,stop_at_layer=args.stop_at_layer
     )
-    sampled_dataset = load_and_sample_dataset(args.dataset_path, sample_size=args.sample_size)
+    sampled_dataset = load_and_sample_dataset(args.dataset_path, start_idx=args.start_idx,end_idx=args.end_idx)
     formatted_dataset = process_dataset(sampled_dataset, num_proc=80)
 
     # 处理输入
@@ -98,10 +109,11 @@ def main(args):
 
     # 按批次准备输入
     with tqdm.tqdm(total=len(formatted_dataset), desc="Processing batches") as pbar:
-        # max_threads = 100  # 设置你希望的线程数，可以根据需要调整
-        with concurrent.futures.ThreadPoolExecutor() as executor:
+        max_threads = 80  # 设置你希望的线程数，可以根据需要调整
+        # print("os cpu counts",os.cpu_count())
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
             futures = []
-            thread_step=300
+            thread_step=200
             # 提交所有任务到线程池
             for i in range(0, len(formatted_dataset), thread_step):
                 future = executor.submit(process_batch, 
@@ -131,6 +143,7 @@ def main(args):
 
     cooccurrence_feature_list=[]
     inputs_name_list=[]
+    l0_act_list=[]
 
     with tqdm.tqdm(total=len(batch_list), desc="Processing cooccurrence") as pbar:
         for batch_idx, inputs_batch in enumerate(batch_list):
@@ -144,13 +157,20 @@ def main(args):
                           }
             # 运行模型并提取特征
 
-            image_indices, feature_act = run_model(inputs_batch, hook_language_model, sae, args.sae_device)
+            image_indices, feature_act = run_model(inputs_batch, hook_language_model, sae, args.sae_device,stop_at_layer=args.stop_at_layer)
             if image_indices is None or feature_act is None:
+                print("No image!")
                 continue
+            feature_act=feature_act
+            l0_acts = ((feature_act[:, 1:] > 0).sum(dim=-1).float()).mean(dim=-1)   
             cooccurrence_feature = separate_feature(image_indices, feature_act)
-            for feature,batch in zip(cooccurrence_feature,inputs_batch["image_name"]):
+            # cooccurrence_feature=[feature.to('cpu') for feature in cooccurrence_feature]
+            # image_name=[batch.to('cpu') for batch in inputs_batch["image_name"] ]
+            # l0_acts=[l0_act.to('cpu') for l0_act in l0_acts]
+            for feature,batch,l0_act in zip(cooccurrence_feature,inputs_batch["image_name"],l0_acts):
                 cooccurrence_feature_list.append(feature)
                 inputs_name_list.append(batch)
+                l0_act_list.append(l0_act)
             # 更新已处理的数据数量
             processed_count += args.batch_size
             total_processed += args.batch_size
@@ -159,17 +179,17 @@ def main(args):
 
             # 保存当前批次的特征（每1000条数据保存一次）
             if processed_count >= 1000:
-                save_cooccurrence_features(cooccurrence_feature_list,inputs_name_list,total_processed)
+                save_cooccurrence_features(cooccurrence_feature_list,inputs_name_list,l0_act_list,total_processed,args.save_path,args.start_idx)
                 print(f"Processed {total_processed} data and saved features.")
 
                 # 重置处理计数
                 processed_count = 0
                 cooccurrence_feature_list=[]
                 inputs_name_list=[]
-
+                l0_act_list=[]
         # 最后一批数据可能没有满1000条，确保保存它们
         if processed_count > 0:
-            save_cooccurrence_features(cooccurrence_feature, inputs_name_list,total_processed)
+            save_cooccurrence_features(cooccurrence_feature, inputs_name_list,l0_act_list,total_processed,args.save_path,args.start_idx)
             print(f"Processed {total_processed} data and saved features.")
 
     print("Feature extraction and saving complete.")
@@ -181,15 +201,17 @@ if __name__ == "__main__":
     parser.add_argument('--model_name', type=str, default="llava-hf/llava-v1.6-mistral-7b-hf", help="Name of the model.")
     parser.add_argument('--model_path', type=str, default="/data/models/llava-v1.6-mistral-7b-hf", help="Path to the model directory.")
     parser.add_argument('--sae_path', type=str, default="/data/changye/model/llavasae_obliec100k_SAEV", help="Path to the SAE model.")
-    parser.add_argument('--sae_device', type=str, default="cuda:7", help="Device for SAE model.")
+    parser.add_argument('--sae_device', type=str, default="cuda:5", help="Device for SAE model.")
     parser.add_argument('--device', type=str, default="cuda:0", help="Device for main model.")
     parser.add_argument('--n_devices', type=int, default=8, help="Number of devices for model parallelism.")
 
     # Dataset configurations
     parser.add_argument('--dataset_path', type=str, default="/data/changye/data/SPA-VL", help="Path to the dataset.")
-    parser.add_argument('--sample_size', type=int, default=100000, help="Number of samples to randomly select.")
-    parser.add_argument('--batch_size', type=int, default=8, help="Batch size for each processing step.")
-
+    parser.add_argument('--start_idx', type=int, default=13000)
+    parser.add_argument('--end_idx', type=int, default=40000)
+    parser.add_argument('--batch_size', type=int, default=10, help="Batch size for each processing step.")
+    parser.add_argument('--save_path', type=str, default="/data/changye/data/SPA_VL_cooccur/")
+    parser.add_argument('--stop_at_layer', type=int, default=17)
     args = parser.parse_args()
     
     main(args)
