@@ -13,6 +13,21 @@ from sae_lens.activation_visualization import (
 )
 import concurrent.futures
 from transformers import AutoTokenizer, LlavaNextForConditionalGeneration, LlavaNextProcessor, AutoModelForCausalLM
+import hashlib
+
+def generate_text_hash(text: str) -> str:
+    """
+    Generate a unique identifier for the given text using SHA-256.
+
+    Args:
+        text (str): Input text.
+
+    Returns:
+        str: Unique hash for the text.
+    """
+    hash_object = hashlib.sha256(text.encode('utf-8'))
+    return hash_object.hexdigest()
+
 os.environ['TMPDIR'] = '/data/changye/tmp'
 os.environ['HF_DATASETS_CACHE']='/data/changye/tmp'
 # export HF_DATASETS_CACHE='/data/changye/tmp'
@@ -42,12 +57,40 @@ def load_and_sample_dataset(dataset_path: str, start_idx,end_idx):
     sampled_dataset = train_dataset.select(range(start_idx, end_idx))
     return sampled_dataset
 
-def format_sample(raw_sample: dict):
+def format_SPA_VL_sample(raw_sample: dict):
     """格式化样本，只提取 question 和 image 字段，并生成所需的 prompt"""
     system_prompt = "A chat between a curious user and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the user's questions."
     user_prompt = 'USER: \n<image> {input}'
     assistant_prompt = '\nASSISTANT: {output}'
 
+    prompt = raw_sample['question'].replace('<image>\n', '').replace('\n<image>', '').replace('<image>', '')
+    image = raw_sample['image']
+    image = image.resize((336, 336)).convert('RGBA')
+    
+
+    formatted_prompt = f'{system_prompt}{user_prompt.format(input=prompt)}{assistant_prompt.format(output="")}'
+    return {'prompt': formatted_prompt, 'image': image}
+
+def format_Anything_sample(raw_sample: dict):
+    """格式化样本，只提取 question 和 image 字段，并生成所需的 prompt"""
+    system_prompt = ""
+    user_prompt = 'USER: \n<image> {input}'
+    assistant_prompt = '\nASSISTANT: {output}'
+    
+    prompt = raw_sample['prompt'].replace('<image>\n', '').replace('\n<image>', '').replace('<image>', '')
+    image = raw_sample['image']
+    image = image.resize((336, 336)).convert('RGBA')
+    text_hash=generate_text_hash(raw_sample['prompt'])
+
+    formatted_prompt = f'{system_prompt}{user_prompt.format(input=prompt)}{assistant_prompt.format(output="")}'
+    return {'prompt': formatted_prompt, 'image': image,'text hash':text_hash}
+
+def format_RLAIFV_sample(raw_sample: dict):
+    """格式化样本，只提取 question 和 image 字段，并生成所需的 prompt"""
+    system_prompt = ""
+    user_prompt = 'USER: \n<image> {input}'
+    assistant_prompt = '\nASSISTANT: {output}'
+    
     prompt = raw_sample['question'].replace('<image>\n', '').replace('\n<image>', '').replace('<image>', '')
     image = raw_sample['image']
     image = image.resize((336, 336)).convert('RGBA')
@@ -57,7 +100,7 @@ def format_sample(raw_sample: dict):
 
 def process_dataset(dataset, num_proc: int = 80):
     """使用 map 方法处理数据集"""
-    return dataset.map(format_sample, num_proc=num_proc, remove_columns=['chosen', 'rejected', 'question'])
+    return dataset.map(format_Anything_sample, num_proc=num_proc, remove_columns=[])
 
 def prepare_inputs(processor, formatted_sample, device):
     """处理样本并准备输入"""
@@ -91,7 +134,7 @@ def process_batch(i, formatted_dataset, processor, args,step):
         "prompt": formatted_dataset['prompt'][i:i + step],
     }
     inputs = prepare_inputs(processor, batch, args.device)
-    inputs["image_name"]=formatted_dataset["image_name"][i:i + step]
+    inputs['text hash']=formatted_dataset['text hash'][i:i + step]
     return inputs
 
 
@@ -153,24 +196,24 @@ def main(args):
                 'attention_mask':inputs_batch['attention_mask'].to(args.device),
                 'pixel_values':inputs_batch['pixel_values'].to(args.device),
                 'image_sizes':inputs_batch['image_sizes'].to(args.device),
-                'image_name':inputs_batch['image_name'],
+                'text hash':inputs_batch['text hash'],
                           }
             # 运行模型并提取特征
 
-            image_indices, feature_act = run_model(inputs_batch, hook_language_model, sae, args.sae_device,stop_at_layer=args.stop_at_layer)
+            _,image_indices, feature_act = run_model(inputs_batch, hook_language_model, sae, args.sae_device,stop_at_layer=args.stop_at_layer)
             if image_indices is None or feature_act is None:
                 print("No image!")
                 continue
-            feature_act=feature_act
             l0_acts = ((feature_act[:, 1:] > 0).sum(dim=-1).float()).mean(dim=-1)   
             cooccurrence_feature = separate_feature(image_indices, feature_act)
-            # cooccurrence_feature=[feature.to('cpu') for feature in cooccurrence_feature]
-            # image_name=[batch.to('cpu') for batch in inputs_batch["image_name"] ]
-            # l0_acts=[l0_act.to('cpu') for l0_act in l0_acts]
-            for feature,batch,l0_act in zip(cooccurrence_feature,inputs_batch["image_name"],l0_acts):
+
+            for feature,batch,l0_act in zip(cooccurrence_feature,inputs_batch['text hash'],l0_acts):
                 cooccurrence_feature_list.append(feature)
                 inputs_name_list.append(batch)
                 l0_act_list.append(l0_act)
+            # for batch,l0_act in zip(inputs_batch["image_name"],l0_acts):
+            #     inputs_name_list.append(batch)
+            #     l0_act_list.append(l0_act)
             # 更新已处理的数据数量
             processed_count += args.batch_size
             total_processed += args.batch_size
@@ -206,11 +249,11 @@ if __name__ == "__main__":
     parser.add_argument('--n_devices', type=int, default=8, help="Number of devices for model parallelism.")
 
     # Dataset configurations
-    parser.add_argument('--dataset_path', type=str, default="/data/changye/data/SPA-VL", help="Path to the dataset.")
+    parser.add_argument('--dataset_path', type=str, default="/data/changye/data/Align-Anything-TI2T-Instruction-100K", help="Path to the dataset.")
     parser.add_argument('--start_idx', type=int, default=13000)
     parser.add_argument('--end_idx', type=int, default=40000)
     parser.add_argument('--batch_size', type=int, default=10, help="Batch size for each processing step.")
-    parser.add_argument('--save_path', type=str, default="/data/changye/data/SPA_VL_cooccur/")
+    parser.add_argument('--save_path', type=str, default="/data/changye/data/Align-Anything_cooccur/")
     parser.add_argument('--stop_at_layer', type=int, default=17)
     args = parser.parse_args()
     

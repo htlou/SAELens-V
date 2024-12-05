@@ -145,6 +145,7 @@ def run_model(inputs, hook_language_model, sae, sae_device: str,stop_at_layer):
             stop_at_layer=stop_at_layer,
             return_type="generate_with_saev",
         )
+        logit=out[0]
         image_indice=out[1]
         tmp_cache = cache[sae.cfg.hook_name]
         
@@ -153,7 +154,35 @@ def run_model(inputs, hook_language_model, sae, sae_device: str,stop_at_layer):
         # print(feature_acts.shape)
         sae_out = sae.decode(feature_acts)
         del cache
-    return image_indice, feature_acts
+    return tmp_cache,image_indice, feature_acts
+
+def cal_top_cosimilarity(logits,image_indice, feature_act):
+    #选出图片和文本token的top50激活feature(l0)
+    # image_indice: Tensor of shape ( num_indices)
+    # feature_acts: List or Tensor of shape (sequence_length, feature_dim)
+    # logits:(sequence_length, model_dim)
+    logits=logits.to(image_indice.device)
+    feature_act=feature_act.to(image_indice.device)
+    assert image_indice.shape[0] == 1176
+
+    values, indices = torch.topk(feature_act, k=50, dim=1)  # values 和 indices 的形状均为 (num_features, 50)
+    token_list = []
+    for idx, val, logit in zip(indices, values, logits):
+        feature_dict = dict(zip(idx.tolist(), val.tolist()))
+        token_dict = {
+            'features': feature_dict,
+            'logits': logit.tolist()  # 将logit张量转换为列表
+        }
+        token_list.append(token_dict)
+
+    image_token_list = [token_list[i] for i in image_indice.tolist()]
+
+    all_indices = torch.arange(len(token_list))
+
+    text_indices = torch.tensor(list(set(all_indices.tolist()) - set(image_indice.tolist())))
+
+    text_token_list = [token_list[i] for i in text_indices.tolist()]
+    return text_token_list, image_token_list
 
 def separate_feature(image_indice, feature_acts):
     # image_indice: Tensor of shape (batch_size, num_indices)
