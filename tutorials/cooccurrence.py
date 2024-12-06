@@ -32,7 +32,7 @@ os.environ['TMPDIR'] = '/data/changye/tmp'
 os.environ['HF_DATASETS_CACHE']='/data/changye/tmp'
 # export HF_DATASETS_CACHE='/data/changye/tmp'
 # # 配置代理
-# os.environ["HF_ENDPOINT"]="https://hf-mirror.com"
+os.environ["HF_ENDPOINT"]="https://hf-mirror.com"
 # os.environ["http_proxy"] = "http://127.0.0.1:7890"
 # os.environ["https_proxy"] = "http://127.0.0.1:7890"
 
@@ -66,6 +66,7 @@ def format_SPA_VL_sample(raw_sample: dict):
     prompt = raw_sample['question'].replace('<image>\n', '').replace('\n<image>', '').replace('<image>', '')
     image = raw_sample['image']
     image = image.resize((336, 336)).convert('RGBA')
+
     
 
     formatted_prompt = f'{system_prompt}{user_prompt.format(input=prompt)}{assistant_prompt.format(output="")}'
@@ -80,7 +81,8 @@ def format_Anything_sample(raw_sample: dict):
     prompt = raw_sample['prompt'].replace('<image>\n', '').replace('\n<image>', '').replace('<image>', '')
     image = raw_sample['image']
     image = image.resize((336, 336)).convert('RGBA')
-    text_hash=generate_text_hash(raw_sample['prompt'])
+    text_hash=generate_text_hash(raw_sample['prompt']+raw_sample['response'])
+    
 
     formatted_prompt = f'{system_prompt}{user_prompt.format(input=prompt)}{assistant_prompt.format(output="")}'
     return {'prompt': formatted_prompt, 'image': image,'text hash':text_hash}
@@ -94,9 +96,10 @@ def format_RLAIFV_sample(raw_sample: dict):
     prompt = raw_sample['question'].replace('<image>\n', '').replace('\n<image>', '').replace('<image>', '')
     image = raw_sample['image']
     image = image.resize((336, 336)).convert('RGBA')
+    text_hash=generate_text_hash(raw_sample['question']+raw_sample['chosen'])
 
     formatted_prompt = f'{system_prompt}{user_prompt.format(input=prompt)}{assistant_prompt.format(output="")}'
-    return {'prompt': formatted_prompt, 'image': image}
+    return {'prompt': formatted_prompt, 'image': image,'text hash':text_hash}
 
 def process_dataset(dataset, num_proc: int = 80):
     """使用 map 方法处理数据集"""
@@ -253,7 +256,7 @@ if __name__ == "__main__":
     parser.add_argument('--start_idx', type=int, default=13000)
     parser.add_argument('--end_idx', type=int, default=40000)
     parser.add_argument('--batch_size', type=int, default=10, help="Batch size for each processing step.")
-    parser.add_argument('--save_path', type=str, default="/data/changye/data/Align-Anything_cooccur/")
+    parser.add_argument('--save_path', type=str, default="/data/changye/data/Align-Anything/")
     parser.add_argument('--stop_at_layer', type=int, default=17)
     args = parser.parse_args()
     

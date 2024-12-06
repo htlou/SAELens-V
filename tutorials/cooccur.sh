@@ -1,4 +1,4 @@
-python /data/changye/SAELens-V/tutorials/cooccurrence.py --start_idx 0 --end_idx 4000
+# python /data/changye/SAELens-V/tutorials/cooccurrence.py --start_idx 0 --end_idx 4000
 python /data/changye/SAELens-V/tutorials/cooccurrence.py --start_idx 4000 --end_idx 8000
 python /data/changye/SAELens-V/tutorials/cooccurrence.py --start_idx 8000 --end_idx 13000
 python /data/changye/SAELens-V/tutorials/cooccurrence.py --start_idx 13000 --end_idx 21000

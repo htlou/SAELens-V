@@ -47,8 +47,8 @@ def main():
     # 指定目标仓库名称和目录
     name_groups = [
         {
-            "directory_path": "/data/changye/data/SPA-VL_L0",
-            "repo_name": "SPA-VL_L0",
+            "directory_path": "/data/changye/data/RLAIF-V_Cosi",
+            "repo_name": "RLAIF-V_Cosi",
             "ignore_dirs": []
         }
     ]
