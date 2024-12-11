@@ -23,6 +23,6 @@ def merge_pt_files(folder_path, output_file):
     print(f"所有 .pt 文件已合并到 {output_file}")
 
 # 示例用法
-folder_path = "/data/changye/data/ALign-Anything_interp/Align-Anything_l0"  # 替换为你的文件夹路径
-output_file = "/data/changye/data/ALign-Anything_interp/Align-Anything_l0.pt"  # 替换为你的输出文件路径
+folder_path = "/data/changye/data/Align-Anything/Align-Anything_cooccur"  # 替换为你的文件夹路径
+output_file = "/data/changye/data/Align-Anything/Align-Anything_cooccur.pt"  # 替换为你的输出文件路径
 merge_pt_files(folder_path, output_file)

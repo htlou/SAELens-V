@@ -1,7 +1,7 @@
 import os
 from huggingface_hub import HfApi
 
-# os.environ["HF_ENDPOINT"] = "https://hf-mirror.com/"
+os.environ["HF_ENDPOINT"] = "https://hf-mirror.com/"
 
 def upload_files_in_directory(directory_path, repo_name, username, token, ignore_dirs=None):
     if ignore_dirs is None:
@@ -42,13 +42,13 @@ def main():
 
     # Hugging Face 用户名和 Token
     username = "Antoinegg1"         # 请替换为您的用户名
-    token = "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"          # 请替换为您的 Hugging Face 访问令牌
+    token = "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"          # 请替换为您的 Hugging Face 访问令牌
 
     # 指定目标仓库名称和目录
     name_groups = [
         {
-            "directory_path": "/data/changye/data/RLAIF-V_Cosi",
-            "repo_name": "RLAIF-V_Cosi",
+            "directory_path": "/data/changye/data/Align-Anything-Cosi",
+            "repo_name": "Align-Anything-Cosi",
             "ignore_dirs": []
         }
     ]
