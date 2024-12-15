@@ -101,8 +101,8 @@ def load_dataset_func(dataset_path: str, columns_to_read: list):
     return dataset
 
 
-def prepare_input(processor,device, image_path: str, example_prompt: str):
-    image = Image.open(image_path)
+def prepare_input(processor,device, image, example_prompt: str):
+    # image = Image.open(image_path)
     image = image.resize((336, 336))
     # example_prompt = example_prompt + " <image>"
     conversation = [
@@ -244,13 +244,91 @@ def patch_mapping(image_indice, feature_acts):
     patch_features = feature_acts[:, patch_indices]
     
     patch_features = patch_features.squeeze(0)
-
+    
+    activation_l0_norms = (patch_features != 0).sum(dim=2)  # Shape: (576, 2)
+    total_activation_l0_norms = activation_l0_norms.to(torch.float32).mean(dim=1)
+    # print(patch_features.shape)
     # Step 1: Compute L1 norm over the last dimension (65536) for each activation
-    activation_l1_norms = patch_features.abs().sum(dim=2)  # Shape: (576, 2)
+    # activation_l1_norms = patch_features.abs().sum(dim=2)  # Shape: (576, 2)
 
-    # Step 2: Sum the L1 norms over the two activations for each patch
-    total_activation_l1_norms = activation_l1_norms.mean(dim=1)  # Shape: (576,)
-    return total_activation_l1_norms,patch_features,feature_acts
+    # # Step 2: Sum the L1 norms over the two activations for each patch
+    # total_activation_l1_norms = activation_l1_norms.mean(dim=1)  # Shape: (576,)
+    return total_activation_l0_norms,patch_features,feature_acts
+
+def select_patch_mapping(image_indice, feature_acts, selected_feature_indices):
+    assert image_indice.shape[0] == 1176
+    newline_indices = torch.arange(image_indice[0] + 576 + 24 - 1, image_indice[0] + 576*2 + 24 - 1, 25)
+    valid_indices = torch.tensor(
+        [i for i in image_indice if i not in newline_indices]
+    )
+
+    # 将前 576 个和后 576 个有效 indices 组合成 (576,2) 的 patch 索引
+    patch_indices = torch.stack(
+        (valid_indices[:576], valid_indices[576:]), dim=1
+    )
+    
+    # 提取对应的 patch 的feature激活值
+    # 假设feature_acts的形状是 (1, total_positions, feature_dim)，
+    # 其中 total_positions 至少是 image_indice中提取出来的数量对应。
+    patch_features = feature_acts[:, patch_indices]   # shape: (1, 576, 2, feature_dim)
+    patch_features = patch_features.squeeze(0)        # shape: (576, 2, feature_dim)
+
+    # 根据 selected_feature_indices 对特征维度进行筛选
+    # 假设 selected_feature_indices 是一个 1D 的tensor或列表，长度小于等于 feature_dim
+    patch_features = patch_features[:, :, selected_feature_indices]  # shape: (576, 2, len(selected_feature_indices))
+
+    # 计算 L0 norm：即统计非零元素的个数
+    activation_l0_norms = (patch_features != 0).sum(dim=2)  # shape: (576, 2)
+    total_activation_l0_norms = activation_l0_norms.to(torch.float32).mean(dim=1)  # shape: (576,)
+
+    return total_activation_l0_norms, patch_features, feature_acts
+
+def weight_patch_mapping(image_indice, feature_acts, selected_feature_indices):
+    assert image_indice.shape[0] == 1176
+    newline_indices = torch.arange(
+        image_indice[0] + 576 + 24 - 1, 
+        image_indice[0] + 576*2 + 24 - 1, 
+        25
+    )
+    valid_indices = torch.tensor([i for i in image_indice if i not in newline_indices])
+
+    # 将前 576 个和后 576 个有效 indices 组合成 (576,2) 的 patch 索引
+    patch_indices = torch.stack(
+        (valid_indices[:576], valid_indices[576:]), dim=1
+    )  # shape: (576, 2)
+
+    # 从 feature_acts 中提取对应 patch 的特征激活值
+    # feature_acts.shape: (1, total_positions, feature_dim)
+    patch_features = feature_acts[:, patch_indices]   # shape: (1, 576, 2, feature_dim)
+    patch_features = patch_features.squeeze(0)        # shape: (576, 2, feature_dim)
+
+    # 将 selected_feature_indices 分解为 indices 和 weights
+    # 假设 selected_feature_indices 格式为 [(idx1, w1), (idx2, w2), ...]
+    indices = [item[0] for item in selected_feature_indices]
+    weights = torch.tensor([item[1] for item in selected_feature_indices], 
+                           dtype=patch_features.dtype, device=patch_features.device)
+    
+    # 使用 indices 对特征维度进行筛选
+    # 处理后 patch_features shape: (576, 2, len(indices))
+    patch_features = patch_features[:, :, indices]
+
+    # 计算 L0 加权：先得到非零元素的掩码，然后与 weights 对应相乘
+    # (patch_features != 0) -> (576, 2, len(indices)) 的布尔张量
+    # 转换为浮点型用于数值计算
+    nonzero_mask = (patch_features != 0).float()
+
+    # 将非零掩码按相应的特征权重加权
+    # weights shape: (len(indices),)，通过广播扩展到 (576, 2, len(indices))
+    weighted_nonzero = nonzero_mask * weights
+
+    # 对最后一个维度(特征维度)求和，得到每个patch在两个位置上的加权L0
+    activation_l0_norms = weighted_nonzero.sum(dim=2)  # shape: (576, 2)
+
+    # 对两个位置求均值得到最终的加权L0范数 (shape: (576,))
+    total_activation_l0_norms = activation_l0_norms.mean(dim=1)
+
+    return total_activation_l0_norms, patch_features, feature_acts
+
 
 def count_red_blue_elements(activation_colored_uint8, blue_threshold=200, red_threshold=200):
     """
@@ -396,14 +474,14 @@ def filter_diff_by_std(diff):
 
     return filtered_diff
 
-def generate_with_saev(inputs, hook_language_model, processor, save_path, image, sae, sae_device: str):
+def generate_with_saev(inputs, hook_language_model, processor, save_path, image, sae, sae_device: str,max_new_tokens=100,selected_feature_indices=None):
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     with torch.no_grad():
         tokens, image_indice, tmp_cache_list = hook_language_model.generate(
             inputs,
             sae_hook_name=sae.cfg.hook_name,
-            max_new_tokens=30,
+            max_new_tokens=max_new_tokens,
         )
         input_length = inputs['input_ids'].shape[1]
         decoded_tokens = processor.tokenizer.convert_ids_to_tokens(tokens[0])
@@ -411,13 +489,19 @@ def generate_with_saev(inputs, hook_language_model, processor, save_path, image,
         previous_total_activation_l1_norms = None
         previous_patch_features=None
 
-        print(output)
+        # print(output)
         
         tmp_cache_list=[tmp_cache.to(sae_device) for tmp_cache in tmp_cache_list]
         feature_acts_list = [sae.encode(tmp_cache) for tmp_cache in tmp_cache_list]
         image_indice = image_indice.to("cpu")
         feature_acts_list = [feature_acts.to("cpu") for feature_acts in feature_acts_list]
-        total_activation_l1_norms_list,patch_features_list,feature_acts_list = zip(*[patch_mapping(image_indice, feature_acts) for feature_acts in feature_acts_list])
+        # print(feature_acts_list)
+        if selected_feature_indices is None:
+            total_activation_l0_norms_list,patch_features_list,feature_acts_list = zip(*[patch_mapping(image_indice, feature_acts) for feature_acts in feature_acts_list])
+        elif selected_feature_indices is not None and type(selected_feature_indices[0])==tuple:
+            total_activation_l0_norms_list,patch_features_list,feature_acts_list = zip(*[weight_patch_mapping(image_indice, feature_acts, selected_feature_indices) for feature_acts in feature_acts_list])
+        else:
+            total_activation_l0_norms_list,patch_features_list,feature_acts_list = zip(*[select_patch_mapping(image_indice, feature_acts, selected_feature_indices) for feature_acts in feature_acts_list])
         # current_activation_map = map_patches_to_image(total_activation_l1_norms_list[0])
         # final_image = overlay_activation_on_image(image, current_activation_map)
         # final_image.save(os.path.join(save_path, f"current.png"))
@@ -476,7 +560,7 @@ def generate_with_saev(inputs, hook_language_model, processor, save_path, image,
         # plt.grid(True)
         # plt.savefig(os.path.join(save_path, "activation_diff_plot.png"))
         # plt.show()
-    return total_activation_l1_norms_list,patch_features_list,feature_acts_list,image_indice
+    return total_activation_l0_norms_list,patch_features_list,feature_acts_list,image_indice,output
 
 
 def main():
